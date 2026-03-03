@@ -324,8 +324,16 @@ async def handle_client_message(phone: str, message: dict, msg_type: str):
             "seriousness_score": conv_state.get("seriousness_score", 0)
         })
 
-        # Owner handoff — detected from AI reply phrase
-        if "owner will message you shortly" in reply.lower():
+        # Owner handoff — detected from AI reply phrase (multiple phrasings)
+        _handoff_phrases = [
+            "owner will message you shortly",
+            "he will message you shortly",
+            "will message you shortly to proceed",
+            "connect you with saransh sharma sir",
+            "connect you with the owner directly",
+            "saransh sharma sir will message",
+        ]
+        if any(p in reply.lower() for p in _handoff_phrases):
             summary = get_summary(phone)
             mark_handoff(phone, summary.get("agreed_price"))
             _cancel_followups(phone)
