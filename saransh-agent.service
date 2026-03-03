@@ -1,0 +1,16 @@
+[Unit]
+Description=SaranshDesigns AI Agent
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/saransh-saleagent
+ExecStart=/opt/saransh-saleagent/venv/bin/python main.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

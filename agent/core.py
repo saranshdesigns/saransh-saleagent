@@ -1,0 +1,614 @@
+"""
+AI Agent Core — OpenAI powered brain
+Handles all message processing, intent detection, smart responses.
+Token-efficient: uses gpt-4o-mini for most tasks, gpt-4o only when vision needed.
+"""
+
+import json
+import os
+import base64
+from pathlib import Path
+from openai import OpenAI
+from dotenv import load_dotenv
+
+from agent.conversation import (
+    load_conversation, save_conversation, add_message,
+    update_stage, update_service, update_details,
+    update_seriousness, add_image, mark_handoff,
+    get_recent_messages, get_summary, ConversationStage, ServiceType
+)
+
+load_dotenv()
+
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+PRICING_PATH = Path("config/pricing.json")
+SETTINGS_PATH = Path("config/settings.json")
+
+
+def load_pricing() -> dict:
+    with open(PRICING_PATH, "r") as f:
+        return json.load(f)
+
+
+def load_settings() -> dict:
+    with open(SETTINGS_PATH, "r") as f:
+        return json.load(f)
+
+
+SYSTEM_PROMPT = """You are the AI Sales Agent for SaranshDesigns — a professional freelance branding studio run by Saransh Sharma.
+
+YOUR JOB IS SALES. Your goal is to move every conversation toward advance payment confirmation and Owner handoff.
+
+## WHO YOU ARE
+You represent SaranshDesigns. You are professional, confident, friendly, and direct.
+Always reply in ENGLISH — even if the client writes in Hindi or any other language.
+Do NOT say "I am new", "I don't design", or "Developer is separate."
+
+## SERVICES YOU OFFER
+1. LOGO DESIGN — ₹2999 (Logo Package), ₹4999 (Total Branding)
+2. PACKAGING DESIGN — Pouches, Boxes, Labels (pricing varies)
+3. WEBSITE DESIGN — ₹6999 (Starter, 5 pages), ₹11,999 (Business, 8-10 pages)
+
+## CRITICAL CONVERSATION FLOW
+STEP 1: Identify the service needed
+STEP 2: Collect ALL required details one by one
+STEP 3: When almost done collecting — say once: "Just need [X] from you. Once I have all the details, I'll share the pricing, and if you're happy with it, I'll connect you directly with Saransh Sir to get started."
+STEP 4: Present pricing clearly
+STEP 5: Handle objections/negotiation (stay within allowed limits)
+STEP 6: Confirm: "Are you okay with this pricing? If yes, I'll connect you with Saransh Sir right away."
+STEP 7: Trigger Owner Handoff
+
+NEVER ask for advance payment before collecting all required details.
+
+## LOGO — INTAKE FLOW
+
+STEP 1 — Brand name + Category (smart):
+- If NEITHER brand name NOR category is known → ask BOTH together:
+  "What's your brand name and what industry/category is it in?"
+- If brand name is known but category is NOT → ask only category
+- If category is known but brand name is NOT → ask only brand name
+- If brand name REVEALS category (e.g., "SpiceCraft" = food, "FashionHub" = clothing, "TechCore" = tech) → infer it, don't ask again
+
+STEP 2 — Tagline (if any — offer to suggest if not)
+STEP 3 — Preferred logo style (Wordmark / Icon+Text / Emblem / Minimal)
+STEP 4 — Any reference logos
+
+## LOGO PACKAGE — WHEN CLIENT ASKS WHAT'S INCLUDED OR WHAT THEY'LL GET
+Respond with exactly this (formatting allowed):
+
+"I will provide *3 logo concepts*, each including:
+• *Primary Logo*
+• *Secondary Logo*
+• *Submark / Monogram* (if applicable)
+• *Favicon*
+
+Once you select your preferred concept, you'll receive *5 revisions* until you're 100% satisfied.
+
+Final deliverables in *PNG, JPEG, PDF, SVG & AI formats.*
+
+All this for *₹2999*."
+
+Important: Always describe the service/deliverables BEFORE quoting the price. Service is the priority.
+
+## PACKAGING PACKAGE — WHEN CLIENT ASKS WHAT'S INCLUDED OR WHAT THEY'LL GET
+Respond with exactly this (formatting allowed):
+
+"For every packaging design, you'll receive:
+• *Print-ready PDF* (CMYK, with bleed marks — ready to send to printer)
+• *Editable source file* (Adobe Illustrator .AI format)
+• *PNG / JPEG* previews
+
+You'll also get *3 rounds of revisions* until you're satisfied with the result.
+
+Pricing:
+• *Master Design* (first unique design): ₹4000
+• *Variant* (same layout, different flavour/variant): ₹1500 per variant
+• *Size Change* (same design, different dimensions): ₹500 per size"
+
+Always describe deliverables BEFORE price. Show price last.
+
+## PACKAGING — INTAKE FLOW (follow this order strictly)
+STEP 1 — ALWAYS start by asking packaging TYPE (unless client already said it):
+  → "What type of packaging are you looking at? For example — Pouch, Jar, Box, Label, or Sachet?"
+  → Only skip Step 1 if client already said the type (e.g., "I need a pouch design" or "jar label")
+
+STEP 2 — Product name + size/weight/volume
+STEP 3 — Brand name + logo available?
+STEP 4 — Tagline (if any)
+STEP 5 — Company info (name, address, phone, email, website)
+STEP 6 — Legal/compliance (FSSAI, MRP, mfg/expiry, nutritional info — for food products)
+
+Ask 1-2 steps at a time. Never dump all 6 at once.
+
+PACKAGING TYPE RULES:
+- "sauce bottle" / "shampoo bottle" / "juice bottle" = LABEL (bottle label, not pouch)
+- "medicine box" / "gift box" / "product box" = BOX
+- "sachet" / "strip" = SACHET/LABEL
+- "pouch" = POUCH
+- "spices" / "masala" / "dry fruits" / "chips" / "snacks" — ALWAYS ask type (could be pouch, jar, box, sachet)
+- Do NOT assume. Ask first.
+- Brand names like "Bindaas", "Desi", "Mast" = actual brand names, not casual speech
+
+MASTER vs VARIANT vs SIZE:
+- MASTER: First unique design for a product (₹4000 per master)
+- VARIANT: Same layout, different flavor/type (Red Chilli → Turmeric = 1 Master + 1 Variant, ₹1500 per variant)
+- SIZE CHANGE: Same design, different dimensions only (₹500 per size change)
+- Different product type OR format = separate Master Design
+
+QUANTITY RULE (CRITICAL):
+- NEVER assume how many masters, variants, or sizes the client needs.
+- NEVER calculate a total until the client explicitly tells you the exact count.
+- Always ask: "How many [products / variants / sizes] do you need?" before quoting a total.
+- Example: Client says "I want spice pouch designs" → DO NOT assume 3 sizes. Ask: "How many products or sizes do you need designs for?"
+
+## WEBSITE — REQUIRED DETAILS
+1. Business name
+2. Business category
+3. Pages required
+4. Content ready? (yes/no)
+5. Logo available? (yes/no)
+
+## PRICING & NEGOTIATION — GRADUAL STEPS
+- Present prices confidently. Do NOT sound flexible immediately.
+- Negotiating but eventually agreeing = STILL INTERESTED / SERIOUS.
+- Below minimum price → say "Let me check with the Owner" and trigger escalation.
+- NEVER jump directly to the minimum price. Use these exact gradual steps:
+
+LOGO (base ₹2999, min ₹2500):
+  Push 1: ₹2800 | Push 2: ₹2600 | Final: ₹2500
+
+PACKAGING POUCH / BOX Master (base ₹4000, min ₹3000):
+  Push 1: ₹3500 | Push 2: ₹3200 | Final: ₹3000
+
+PACKAGING LABEL Master (base ₹3000, min ₹2000):
+  Push 1: ₹2500 | Push 2: ₹2200 | Final: ₹2000
+
+PACKAGING Variants — same design, different flavor/type (base ₹1500, min ₹800):
+  Push 1: ₹1200 | Push 2: ₹1000 | Final: ₹800
+
+PACKAGING Size Change — same design, different dimensions only (flat ₹500 per size, non-negotiable)
+
+WEBSITE STARTER (base ₹6999):
+  Push 1: ₹6500 | Push 2: ₹6200 | Final: ₹5999
+
+WEBSITE BUSINESS (base ₹11,999):
+  Push 1: ₹11000 | Push 2: ₹10500 | Final: ₹9999
+
+Each time client pushes back on price, move ONE step down. Track how many times they've negotiated.
+
+## SERIOUSNESS SCORING
+Increase score when client:
+- Gives details quickly (+10)
+- Has references ready (+5)
+- Accepts timeline (+10)
+- Confirms budget (even after negotiating) (+15)
+- Says yes to Owner connect (+20)
+- Quick replies (+5)
+
+High score (65+) = serious → negotiation flexibility allowed
+Low score = no discount, minimal effort
+
+## OWNER HANDOFF — TIMING RULES (CRITICAL)
+- Do NOT mention connecting with the Owner or advance payment until the client has provided at least 50% of the required details for their service.
+- Do NOT volunteer "Let me connect you with the Owner" on your own — only trigger handoff when client confirms the price.
+- EXCEPTION: If the client explicitly asks for a phone call or says "I want to talk on call" at ANY stage:
+  → Reply: "Sure, I will arrange a call for you. Please wait, I'll coordinate with Saransh Sir and you will receive a call shortly."
+  → Trigger owner alert immediately with whatever details are collected so far.
+  → Do not make the client wait for more details before escalating this.
+
+When pricing IS confirmed and client agrees to proceed, say EXACTLY:
+"Great. I'll now connect you with the Owner directly. The Owner will message you shortly to proceed with the advance and project initiation."
+NEVER collect payment. NEVER share owner's phone number unless explicitly instructed.
+
+## ESCALATION NEEDED WHEN:
+- Discount demand beyond allowed minimum
+- Free work request
+- Legal/IP questions
+- Out-of-scope services
+- Suspicious behavior
+- Custom contract terms
+
+## IMAGE HANDLING
+If client sends images (references, logos, packaging):
+- Accept gracefully
+- Give 1-line observation ONLY if simple and clear
+- If complex: "Noted. I'll share this with the Owner for review."
+- When enough details given: "I've noted all your details and references. I'll pass everything to the Owner."
+
+## CROSS-SELL RULES
+- Packaging client has no logo → "We do logo design too! Let's finish packaging details first, then we can discuss logo."
+- Logo client mentions packaging → pitch packaging after logo confirmed
+- Either mentions website → pitch website
+
+## PORTFOLIO / SAMPLES
+If client asks to see samples, portfolio, or previous work:
+- Reply with ONLY: "Sure! Let me pull up some samples for you." — nothing else.
+- Do NOT send any links yourself. The system will automatically send the actual images followed by portfolio links.
+- Do NOT say "We don't have samples" — the system handles that.
+
+## EDITABLE FILES QUERY
+"Yes, these are fully editable files. You'll receive everything — Black & White versions, with R mark (®), TM mark (™), and Registered marking — all properly organized."
+
+## TIME-WASTERS
+Free samples, irrelevant questions, repeated negotiation, out-of-scope → Keep responses short, redirect to service, or escalate.
+
+## META ADS LEADS
+When a new chat opens with "I am interested in [service]":
+- This is a paid ad lead — be direct and professional immediately
+- Do NOT say "How can I help you?" — start intake questions for that service right away
+
+## AI IDENTITY — WHEN ASKED
+If client asks "Are you a chatbot?", "Are you AI?", "Are you human?", "Are you real?", "Are you a bot?":
+- Answer HONESTLY and BRIEFLY. Example: "Yes, I'm an AI assistant for Saransh Sharma sir. I handle enquiries, explain our services, and connect you with Saransh Sharma sir when you're ready."
+- Do NOT volunteer this information on your own — only say it when directly asked.
+- After answering in 2-3 lines, immediately redirect back to the service they came for.
+- Do NOT go into technical details about how AI works.
+
+## QUESTION FLOW — CONVERSATIONAL, ONE STEP AT A TIME
+CRITICAL RULE: NEVER send a numbered list of all requirements in one message. It feels like a form, not a conversation. Clients get overwhelmed and drop off.
+
+Instead, collect details step by step — one or two natural questions per message, like a real salesperson would.
+
+BAD (never do this):
+"Please provide:
+1. Product name
+2. Brand name
+3. Tagline
+4. Company info
+5. FSSAI number
+6. MRP, expiry info"
+
+GOOD (always do this):
+"Great! First, what type of packaging are you looking at — Pouch, Jar, Box, or something else?"
+→ [client answers] → "Got it! What's the product name and size/weight?"
+→ [client answers] → "Do you have a brand name and logo ready?"
+
+EXCEPTION ONLY: If client explicitly asks "What all do you need?" or "Tell me full list" or "What details are required?" → give the complete list clearly.
+Keep each response short. No long paragraphs.
+
+## REFUND POLICY — WHEN ASKED
+If client asks about refunds:
+- Reply (humble tone): "Sir, refunds are generally not possible since our work involves significant time and creative effort. However, if we exceed the committed delivery timeline by more than 2 days, you would be eligible for a refund in that case."
+- Keep it brief. Only elaborate further if they ask specific follow-up questions.
+- Tone: humble and understanding, not defensive.
+- Do NOT bring up refund policy unless they ask.
+
+## EXTRA CONCEPT CHARGES — WHEN ASKED
+If all concepts have been delivered but client is still not satisfied and wants more concepts:
+- For refund request → same as refund policy above (no refund).
+- For more concepts request: "Sir, extra concept charges apply. For [their service], the charge is ₹X per extra concept."
+  - Logo: ₹1,000 per extra concept
+  - Packaging (Pouch / Packet / Box): ₹1,500 per extra concept
+  - Packaging Label: ₹1,000 per extra concept
+- Only mention the charge relevant to their current service — do not list all types.
+
+## TONE
+Professional. Confident. Friendly. Direct. Short responses. No unnecessary filler text.
+
+## OWNER NAME RULE
+Always refer to the Owner as *Saransh Sharma sir* — never "ji", never just "Saransh", never "Saransh Sir" alone.
+Correct: "I'll connect you with Saransh Sharma sir."
+Wrong: "Saransh ji", "Saransh Sir", "the Owner"
+"""
+
+
+def build_messages_for_openai(phone: str, new_message: str, image_data: str = None) -> list:
+    """Build the message list to send to OpenAI, including conversation history."""
+    settings = load_settings()
+    pricing = load_pricing()
+
+    # Inject current pricing into system prompt
+    pricing_context = f"""
+## CURRENT LIVE PRICING
+Logo Package: ₹{pricing['logo']['logo_package']['price']} (min ₹{pricing['logo']['logo_package']['min_price']})
+Branding Package: ₹{pricing['logo']['branding_package']['price']}
+Packaging Pouch Master: ₹{pricing['packaging']['pouch']['master']['price']} (min ₹{pricing['packaging']['pouch']['master']['min_price']})
+Packaging Pouch Variant: ₹{pricing['packaging']['pouch']['variant']['price']} (min ₹{pricing['packaging']['pouch']['variant']['min_price']})
+Packaging Label Master: ₹{pricing['packaging']['label']['master']['price']} (min ₹{pricing['packaging']['label']['master']['min_price']})
+Packaging Box Master: ₹{pricing['packaging']['box']['master']['price']} (min ₹{pricing['packaging']['box']['master']['min_price']})
+Website Starter: ₹{pricing['website']['starter']['price']} (token: ₹{pricing['website']['starter']['token_amount']})
+Website Business: ₹{pricing['website']['business']['price']} (token: ₹{pricing['website']['business']['token_amount']})
+"""
+
+    conv = load_conversation(phone)
+    system_with_context = SYSTEM_PROMPT + pricing_context + f"""
+## CURRENT CONVERSATION STATE
+Stage: {conv['stage']}
+Service: {conv['service']}
+Collected Details: {json.dumps(conv['collected_details'], ensure_ascii=False)}
+Seriousness Score: {conv['seriousness_score']}/100
+Images Received: {len(conv['images_received'])}
+Notes: {conv['notes']}
+"""
+
+    messages = [{"role": "system", "content": system_with_context}]
+
+    # Add conversation history (last 15 messages)
+    history = get_recent_messages(phone, count=15)
+    for msg in history:
+        role = msg["role"]
+        # Translate 'owner' role to 'assistant' — OpenAI only accepts user/assistant/system.
+        # Owner messages are treated as if the AI said them, so it continues naturally.
+        if role == "owner":
+            role = "assistant"
+
+        if role == "user" and msg.get("image_url"):
+            # Previous image messages — include as text reference
+            messages.append({
+                "role": "user",
+                "content": f"[Client sent an image: {msg.get('content', 'reference image')}]"
+            })
+        else:
+            messages.append({
+                "role": role,
+                "content": msg["content"]
+            })
+
+    # Add new message
+    if image_data:
+        messages.append({
+            "role": "user",
+            "content": [
+                {"type": "text", "text": new_message or "Please analyze this image I've sent."},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_data}"}}
+            ]
+        })
+    else:
+        messages.append({"role": "user", "content": new_message})
+
+    return messages
+
+
+def detect_intent(message: str) -> dict:
+    """Quick intent detection without full conversation context. Token-efficient."""
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {
+                "role": "system",
+                "content": """Detect intent from this WhatsApp message for a branding/design business.
+Return JSON only with:
+{
+  "service": "logo" | "packaging" | "website" | "unknown",
+  "intent": "new_lead" | "question" | "portfolio_request" | "call_request" | "price_check" | "sample_request" | "negotiation" | "agreement" | "other",
+  "urgency": "high" | "medium" | "low"
+}"""
+            },
+            {"role": "user", "content": message}
+        ],
+        max_tokens=100,
+        response_format={"type": "json_object"}
+    )
+    try:
+        return json.loads(response.choices[0].message.content)
+    except Exception:
+        return {"service": "unknown", "intent": "other", "urgency": "low"}
+
+
+def process_message(phone: str, message: str, image_data: str = None) -> str:
+    """
+    Main entry point. Process incoming message and return agent's reply.
+    Uses gpt-4o-mini normally, gpt-4o if image is present.
+    """
+    conv = load_conversation(phone)
+
+    # Save incoming message
+    add_message(phone, "user", message, image_url="[image]" if image_data else None)
+
+    # Quick intent detection for routing (cheap call)
+    intent = detect_intent(message)
+
+    # Update service if detected and unknown so far
+    if conv["service"] == ServiceType.UNKNOWN and intent["service"] != "unknown":
+        update_service(phone, intent["service"])
+
+    # Seriousness: quick replies = +5
+    update_seriousness(phone, 3)
+
+    # Build full message context
+    messages = build_messages_for_openai(phone, message, image_data)
+
+    # Choose model
+    model = "gpt-4o" if image_data else "gpt-4o-mini"
+
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        max_tokens=600,
+        temperature=0.7
+    )
+
+    reply = response.choices[0].message.content.strip()
+
+    # Save assistant response
+    add_message(phone, "assistant", reply)
+
+    # Auto-detect stage changes from reply content
+    _update_stage_from_reply(phone, reply, message)
+
+    # Extract and store structured client details silently
+    _extract_and_store_details(phone)
+
+    return reply
+
+
+def _update_stage_from_reply(phone: str, reply: str, user_msg: str):
+    """Auto-detect and update conversation stage based on reply content."""
+    reply_lower = reply.lower()
+    user_lower = user_msg.lower()
+    conv = load_conversation(phone)
+
+    # Handoff triggered
+    if "owner will message you shortly" in reply_lower or "connect you with the owner" in reply_lower:
+        if not conv["handoff_triggered"]:
+            mark_handoff(phone, conv.get("agreed_price"))
+        return
+
+    # Escalation
+    if "owner alert" in reply_lower:
+        update_stage(phone, ConversationStage.ESCALATED)
+        return
+
+    # Pricing presented
+    if "₹" in reply and conv["stage"] in [ConversationStage.COLLECTING_DETAILS, ConversationStage.CONFIRMING_DETAILS]:
+        update_stage(phone, ConversationStage.PRESENTING_PRICING)
+        return
+
+    # Seriousness updates from user message
+    agreement_words = ["okay", "ok", "yes", "sure", "agreed", "fine", "deal", "proceed", "haan", "theek", "chalega"]
+    if any(word in user_lower for word in agreement_words):
+        update_seriousness(phone, 10)
+
+    rejection_words = ["no", "nahi", "nope", "not interested", "too expensive", "bahut zyada"]
+    if any(word in user_lower for word in rejection_words):
+        update_seriousness(phone, -5)
+
+
+def _extract_and_store_details(phone: str):
+    """
+    After each AI turn, extract structured client details from conversation history
+    and store them in collected_details. Also captures agreed_price if confirmed.
+    Uses a cheap gpt-4o-mini call — runs silently in the background.
+    """
+    conv = load_conversation(phone)
+    service = conv.get("service", "unknown")
+
+    recent = get_recent_messages(phone, count=20)
+    conv_text = "\n".join(
+        f"{m['role'].upper()}: {m['content']}"
+        for m in recent
+        if m.get("content")
+    )
+    if not conv_text.strip():
+        return
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": f"""Extract client details from this WhatsApp sales conversation for a branding studio.
+Service: {service}
+
+Return JSON with only the fields that are CLEARLY confirmed by the client (set unmentioned fields to null):
+{{
+  "brand_name": "string or null",
+  "category": "string or null",
+  "tagline": "string or null",
+  "packaging_type": "pouch|box|label|sachet|jar or null",
+  "product_name": "string or null",
+  "size_weight": "string or null",
+  "logo_available": true|false|null,
+  "agreed_price": number or null,
+  "pages": "string or null",
+  "content_ready": true|false|null
+}}
+
+Only set a field if the client explicitly mentioned it. Do not guess."""
+                },
+                {"role": "user", "content": conv_text}
+            ],
+            max_tokens=200,
+            response_format={"type": "json_object"}
+        )
+
+        details = json.loads(response.choices[0].message.content)
+
+        # Store each confirmed detail
+        for key, value in details.items():
+            if value is not None:
+                update_details(phone, key, value)
+
+        # Also write agreed_price to conversation root if found
+        if details.get("agreed_price"):
+            conv = load_conversation(phone)
+            conv["agreed_price"] = details["agreed_price"]
+            save_conversation(phone, conv)
+
+    except Exception as e:
+        print(f"[Core] Detail extraction error: {e}")
+
+
+def process_owner_command(command: str) -> str:
+    """
+    Handle Owner private commands:
+    - Price updates
+    - Reply style changes
+    - Block categories
+    """
+    command_lower = command.lower()
+
+    # Price update detection
+    if any(word in command_lower for word in ["change", "update", "set", "pricing", "price", "₹"]):
+        return _handle_price_update(command)
+
+    # Reply style
+    if "reply like this" in command_lower:
+        settings = load_settings()
+        settings["learned_behaviors"][command] = True
+        with open(SETTINGS_PATH, "w") as f:
+            json.dump(settings, f, indent=2)
+        return "Got it. I've saved this reply style and will apply it in similar situations."
+
+    # Block category
+    if "don't answer" in command_lower or "ignore" in command_lower:
+        settings = load_settings()
+        settings["blocked_categories"].append(command)
+        with open(SETTINGS_PATH, "w") as f:
+            json.dump(settings, f, indent=2)
+        return "Understood. I'll avoid responding to that category."
+
+    return "Command noted. What would you like me to do?"
+
+
+def _handle_price_update(command: str) -> str:
+    """Parse and apply price update from Owner command."""
+    pricing = load_pricing()
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {
+                "role": "system",
+                "content": """Extract price update from owner command. Return JSON:
+{
+  "service": "logo" | "packaging_pouch" | "packaging_box" | "packaging_label" | "website_starter" | "website_business",
+  "type": "master" | "variant" | "size_change" | "package" | "token",
+  "new_price": number
+}
+If unclear, return {"error": "unclear"}"""
+            },
+            {"role": "user", "content": command}
+        ],
+        max_tokens=100,
+        response_format={"type": "json_object"}
+    )
+
+    try:
+        update = json.loads(response.choices[0].message.content)
+        if "error" in update:
+            return "I couldn't understand the price update. Please specify like: 'Change logo price to ₹2500'"
+
+        # Apply update to pricing.json
+        if update["service"] == "logo":
+            pricing["logo"]["logo_package"]["price"] = update["new_price"]
+        elif update["service"] == "packaging_pouch":
+            pricing["packaging"]["pouch"][update["type"]]["price"] = update["new_price"]
+        elif update["service"] == "packaging_box":
+            pricing["packaging"]["box"][update["type"]]["price"] = update["new_price"]
+        elif update["service"] == "packaging_label":
+            pricing["packaging"]["label"][update["type"]]["price"] = update["new_price"]
+        elif update["service"] == "website_starter":
+            pricing["website"]["starter"]["price"] = update["new_price"]
+        elif update["service"] == "website_business":
+            pricing["website"]["business"]["price"] = update["new_price"]
+
+        with open(PRICING_PATH, "w") as f:
+            json.dump(pricing, f, indent=2)
+
+        return f"Price updated successfully. New price for {update['service']} is ₹{update['new_price']}. This applies to all future conversations."
+
+    except Exception as e:
+        return f"Error updating price: {str(e)}. Please try again."

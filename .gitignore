@@ -1,0 +1,30 @@
+# Secrets & credentials (NEVER commit these)
+.env
+.env.txt
+credentials/
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# Runtime data (stays on server)
+data/conversations/
+data/portfolio_cache/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+.claude/

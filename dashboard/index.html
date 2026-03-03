@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SaranshDesigns — Dashboard</title>
+  <link rel="stylesheet" href="/dashboard/style.css" />
+</head>
+<body>
+
+<!-- ==================== LOGIN SCREEN ==================== -->
+<div id="login-screen">
+  <div class="login-card">
+    <h1>SaranshDesigns</h1>
+    <p class="subtitle">Agent Dashboard &mdash; Owner Access</p>
+    <input type="password" id="login-password" placeholder="Enter password" autocomplete="current-password" />
+    <button id="login-btn">Sign In</button>
+    <p class="login-error" id="login-error">Incorrect password. Try again.</p>
+  </div>
+</div>
+
+<!-- ==================== MAIN APP ==================== -->
+<div id="app">
+
+  <!-- Top bar -->
+  <div class="top-bar">
+    <h2>SaranshDesigns &mdash; Agent Dashboard</h2>
+    <div class="right">
+      <div class="ws-status">
+        <span class="status-dot" id="ws-dot"></span>
+        <span id="ws-label">Connecting...</span>
+      </div>
+      <span class="time" id="current-time"></span>
+      <button class="logout-btn" onclick="logout()">Logout</button>
+    </div>
+  </div>
+
+  <!-- Analytics row -->
+  <div class="analytics-bar">
+    <div class="stat-card">
+      <div class="stat-num" id="stat-total">—</div>
+      <div class="stat-label">Total Chats</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num" id="stat-today">—</div>
+      <div class="stat-label">Active Today</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num" id="stat-handoffs">—</div>
+      <div class="stat-label">Handoffs</div>
+    </div>
+    <div class="divider-v"></div>
+    <div class="stage-mini" id="stage-breakdown"></div>
+  </div>
+
+  <!-- Main body -->
+  <div class="main-body">
+
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <span>Conversations</span>
+        <span id="conv-count" style="color:#bbb;font-weight:400;font-size:12px;"></span>
+      </div>
+      <div class="conv-list" id="conv-list">
+        <div class="empty-state">Loading...</div>
+      </div>
+    </div>
+
+    <!-- Chat area -->
+    <div class="chat-area">
+
+      <!-- No conversation selected -->
+      <div class="no-chat-selected" id="no-chat">
+        <div class="icon">💬</div>
+        <p>Select a conversation to view</p>
+      </div>
+
+      <!-- Active chat panel -->
+      <div id="chat-panel" class="hidden" style="display:flex;flex-direction:column;flex:1;overflow:hidden;">
+
+        <!-- Chat header -->
+        <div class="chat-header">
+          <div class="chat-header-info">
+            <h3 id="chat-phone">—</h3>
+            <p id="chat-subtitle">—</p>
+          </div>
+          <div class="chat-header-badges" id="chat-badges"></div>
+        </div>
+
+        <!-- Messages -->
+        <div class="messages-scroll" id="messages-scroll"></div>
+
+        <!-- Owner input -->
+        <div class="msg-input-bar">
+          <textarea
+            id="msg-input"
+            rows="1"
+            placeholder="Type a message as Owner... (Enter to send, Shift+Enter for new line)"
+            onkeydown="handleInputKey(event)"
+            oninput="autoResize(this)"
+          ></textarea>
+          <button class="send-btn" id="send-btn" onclick="sendOwnerMessage()" title="Send message">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </button>
+        </div>
+
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script src="/dashboard/app.js"></script>
+</body>
+</html>

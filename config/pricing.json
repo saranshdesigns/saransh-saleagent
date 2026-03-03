@@ -1,0 +1,50 @@
+{
+  "_note": "Owner can update prices here anytime. Changes apply immediately.",
+  "logo": {
+    "logo_package": {
+      "price": 2999,
+      "min_price": 2500,
+      "below_min_requires_owner": true,
+      "label": "Logo Package"
+    },
+    "branding_package": {
+      "price": 4999,
+      "min_price": 4500,
+      "below_min_requires_owner": true,
+      "label": "Total Branding Package"
+    },
+    "advance_percent": 50
+  },
+  "packaging": {
+    "pouch": {
+      "master": { "price": 4000, "min_price": 3000 },
+      "variant": { "price": 1500, "min_price": 800 },
+      "size_change": { "price": 500, "min_price": 300 }
+    },
+    "box": {
+      "master": { "price": 4000, "min_price": 3000 },
+      "variant": { "price": 1500, "min_price": 800 },
+      "size_change": { "price": 500, "min_price": 300 }
+    },
+    "label": {
+      "master": { "price": 3000, "min_price": 2000 },
+      "variant": { "price": 800, "min_price": 500 },
+      "size_change": { "price": 300, "min_price": 150 }
+    },
+    "advance_percent": 50
+  },
+  "website": {
+    "starter": {
+      "price": 6999,
+      "token_amount": 2000,
+      "min_token": 1000,
+      "label": "Starter Website (5 pages)"
+    },
+    "business": {
+      "price": 11999,
+      "token_amount": 2000,
+      "min_token": 1000,
+      "label": "Business Website (8-10 pages)"
+    }
+  }
+}
