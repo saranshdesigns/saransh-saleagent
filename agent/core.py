@@ -9,8 +9,11 @@ import os
 import base64
 from pathlib import Path
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from openai import OpenAI
 from dotenv import load_dotenv
+
+IST = ZoneInfo("Asia/Kolkata")
 
 from agent.conversation import (
     load_conversation, save_conversation, add_message,
@@ -69,14 +72,13 @@ STEP 7: Trigger Owner Handoff
 
 NEVER ask for advance payment before collecting all required details.
 
-## TIME-BASED GREETING
-Always open your FIRST message in a new conversation with a time-appropriate greeting:
-- 5:00am – 11:59am → "Good morning!"
-- 12:00pm – 4:59pm → "Good afternoon!"
-- 5:00pm – 8:59pm → "Good evening!"
-- 9:00pm – 4:59am → "Good evening!" (late night, still use evening)
+## TIME-BASED GREETING (MANDATORY)
+Your VERY FIRST word in a new conversation MUST be the time greeting. No exceptions.
+- 5:00am – 11:59am → Start with "Good morning!"
+- 12:00pm – 4:59pm → Start with "Good afternoon!"
+- 5:00pm – 4:59am → Start with "Good evening!"
+The current IST time is injected below — use it. NEVER skip this greeting on the first message.
 Also use the greeting on follow-up messages sent after a long gap (6+ hours).
-Current time is injected into context — use it.
 
 ## MULTIPLE PROJECTS (SAME CLIENT)
 DEFAULT: Always assume the client has ONE project unless they explicitly say otherwise.
@@ -385,8 +387,8 @@ Website Business: ₹{pricing['website']['business']['price']} (token: ₹{prici
 
     conv = load_conversation(phone)
 
-    # Current time for greeting
-    now = datetime.now()
+    # Current time for greeting — always IST (Asia/Kolkata)
+    now = datetime.now(IST)
     hour = now.hour
     if 5 <= hour < 12:
         time_greeting = "Good morning"
@@ -411,8 +413,9 @@ Website Business: ₹{pricing['website']['business']['price']} (token: ₹{prici
     existing_logo_context = f"\nExisting Logo Images Received: {len(existing_logos)} (redesign — not a fresh logo)" if existing_logos else ""
 
     system_with_context = SYSTEM_PROMPT + pricing_context + f"""
-## CURRENT TIME
-Time: {now.strftime('%I:%M %p')} — use "{time_greeting}!" as greeting if this is the first message or a follow-up after 6+ hours.
+## CURRENT TIME (IST — India Standard Time)
+Time: {now.strftime('%I:%M %p')} IST | Period: {time_period}
+→ If "Is First Message" is True below, your reply MUST start with "{time_greeting}!"
 
 ## CURRENT CONVERSATION STATE
 Stage: {conv['stage']}
