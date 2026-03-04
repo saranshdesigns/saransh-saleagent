@@ -250,7 +250,17 @@ async def handle_client_message(phone: str, message: dict, msg_type: str):
             image_bytes = await download_media(media_id)
             if image_bytes:
                 image_data = encode_image_to_base64(image_bytes)
-                add_image(phone, f"media_{media_id}", caption)
+                # Tag as existing_logo if client mentioned logo redesign/improvement
+                _caption_lower = (caption or "").lower()
+                _conv_check2 = load_conversation(phone)
+                _recent_msgs = " ".join(
+                    m.get("content", "") for m in _conv_check2.get("messages", [])[-6:]
+                ).lower()
+                _is_existing_logo = any(kw in _caption_lower + _recent_msgs for kw in [
+                    "improve", "redesign", "better", "existing logo", "already have", "logo hai", "logo bana do"
+                ])
+                _img_tag = "existing_logo" if _is_existing_logo else "reference"
+                add_image(phone, f"media_{media_id}", caption, tag=_img_tag)
 
         elif msg_type == "document":
             text = "I've shared a document/file."

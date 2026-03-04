@@ -70,7 +70,9 @@ def _new_conversation(phone: str) -> dict:
         "handoff_triggered": False,
         "escalated": False,
         "cross_sell_opportunities": [],
-        "notes": []
+        "notes": [],
+        "projects": [],
+        "active_project": 0
     }
 
 
@@ -115,14 +117,47 @@ def update_seriousness(phone: str, delta: int):
     save_conversation(phone, conv)
 
 
-def add_image(phone: str, image_url: str, caption: str = ""):
+def add_image(phone: str, image_url: str, caption: str = "", tag: str = "reference"):
     conv = load_conversation(phone)
     conv["images_received"].append({
         "url": image_url,
         "caption": caption,
+        "tag": tag,  # "reference" | "existing_logo" | "sample_request"
         "timestamp": datetime.now().isoformat()
     })
     save_conversation(phone, conv)
+
+
+def add_project(phone: str, service: str) -> int:
+    """Add a new project for a multi-service client. Returns new project index."""
+    conv = load_conversation(phone)
+    project = {
+        "id": len(conv.get("projects", [])) + 1,
+        "service": service,
+        "details": {},
+        "stage": "collecting",
+        "agreed_price": None,
+        "notes": []
+    }
+    if "projects" not in conv:
+        conv["projects"] = []
+    conv["projects"].append(project)
+    conv["active_project"] = len(conv["projects"]) - 1
+    save_conversation(phone, conv)
+    return conv["active_project"]
+
+
+def get_projects(phone: str) -> list:
+    conv = load_conversation(phone)
+    return conv.get("projects", [])
+
+
+def update_project_details(phone: str, project_index: int, key: str, value):
+    conv = load_conversation(phone)
+    projects = conv.get("projects", [])
+    if project_index < len(projects):
+        projects[project_index]["details"][key] = value
+        save_conversation(phone, conv)
 
 
 def add_note(phone: str, note: str):
@@ -155,7 +190,9 @@ def get_summary(phone: str) -> dict:
         "seriousness_score": conv["seriousness_score"],
         "agreed_price": conv["agreed_price"],
         "images_count": len(conv["images_received"]),
-        "notes": conv["notes"]
+        "images_received": conv["images_received"],
+        "notes": conv["notes"],
+        "projects": conv.get("projects", [])
     }
 
 

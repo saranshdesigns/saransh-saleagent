@@ -93,6 +93,19 @@ async def send_owner_alert(summary: dict):
     details = summary.get("details", {})
     details_text = "\n".join([f"  • {k}: {v}" for k, v in details.items()]) if details else "  (still collecting)"
 
+    # Multi-project summary
+    projects = summary.get("projects", [])
+    projects_text = ""
+    if projects:
+        projects_text = "\n\n📦 *Multiple Projects:*"
+        for p in projects:
+            p_details = "\n".join([f"    - {k}: {v}" for k, v in p.get("details", {}).items()]) or "    (details pending)"
+            projects_text += f"\n  *Project {p['id']} — {p['service'].upper()}:*\n{p_details}\n  Agreed: {'₹' + str(p['agreed_price']) if p.get('agreed_price') else 'TBD'}"
+
+    # Existing logo flag
+    existing_logos = [img for img in summary.get("images_received", []) if img.get("tag") == "existing_logo"]
+    logo_note = "\n⚠️ *Logo Redesign:* Client has an existing logo — this is an improvement, not fresh design." if existing_logos else ""
+
     alert_message = f"""🔔 *SaranshDesigns Agent Alert*
 
 📋 *Service:* {summary.get('service', 'Unknown').upper()}
@@ -104,7 +117,7 @@ async def send_owner_alert(summary: dict):
 {details_text}
 
 💰 *Agreed Price:* {'₹' + str(summary.get('agreed_price')) if summary.get('agreed_price') else 'Not yet confirmed'}
-🖼️ *Images Received:* {summary.get('images_count', 0)}
+🖼️ *Images Received:* {summary.get('images_count', 0)}{logo_note}{projects_text}
 
 📌 *Notes:*
 {chr(10).join(['  • ' + n for n in summary.get('notes', [])]) if summary.get('notes') else '  None'}
