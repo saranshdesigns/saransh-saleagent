@@ -17,19 +17,19 @@
   },
   "packaging": {
     "pouch": {
-      "master": { "price": 4000, "min_price": 3000 },
-      "variant": { "price": 1500, "min_price": 800 },
-      "size_change": { "price": 500, "min_price": 300 }
+      "master": { "price": 5000, "min_price": 4000 },
+      "variant": { "price": 2000, "min_price": 1000 },
+      "size_change": { "price": 500, "min_price": 500, "non_negotiable": true }
     },
     "box": {
-      "master": { "price": 4000, "min_price": 3000 },
-      "variant": { "price": 1500, "min_price": 800 },
-      "size_change": { "price": 500, "min_price": 300 }
+      "master": { "price": 5000, "min_price": 4000 },
+      "variant": { "price": 2000, "min_price": 1000 },
+      "size_change": { "price": 500, "min_price": 500, "non_negotiable": true }
     },
     "label": {
-      "master": { "price": 3000, "min_price": 2000 },
-      "variant": { "price": 800, "min_price": 500 },
-      "size_change": { "price": 300, "min_price": 150 }
+      "master": { "price": 3000, "min_price": 2500 },
+      "variant": { "price": 1000, "min_price": 600 },
+      "size_change": { "price": 400, "min_price": 400, "non_negotiable": true }
     },
     "advance_percent": 50
   },
