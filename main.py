@@ -403,7 +403,7 @@ async def handle_portfolio_request(phone: str, text: str):
     conv = load_conversation(phone)
     # Detect service from current message first — handles cross-service sample requests
     service = _extract_service_from_text(text) or conv.get("service") or "logo"
-    details = conv.get("details", {})
+    details = conv.get("collected_details", {})
 
     # Extract packaging type from stored details or conversation messages
     packaging_type = (
@@ -490,7 +490,7 @@ def _extract_packaging_type_from_text(text: str) -> str:
     if not text:
         return None
     lower = text.lower()
-    if "pouch" in lower:
+    if "pouch" in lower or "packet" in lower or "puch" in lower:
         return "pouch"
     if "box" in lower or "carton" in lower:
         return "box"
