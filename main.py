@@ -285,10 +285,12 @@ async def handle_client_message(phone: str, message: dict, msg_type: str):
         })
 
         # Greeting — split into 2 messages with 4s delay (more human feel)
+        from agent.core import _get_ist_greeting
         _GREETINGS = {"hello", "hi", "hey", "hii", "helo", "hellow", "namaste", "namaskar", "sup", "yo", "hai", "hii"}
         conv_state = load_conversation(phone)
         if conv_state.get("stage") == "new" and text.lower().strip() in _GREETINGS:
-            msg1 = "Hello! Welcome to SaranshDesigns. How can I assist you today?"
+            _greet = _get_ist_greeting()
+            msg1 = f"{_greet} Welcome to SaranshDesigns. How can I assist you today?"
             msg2 = "Are you looking for logo design, packaging design, or website design?"
             await send_text(phone, msg1)
             await asyncio.sleep(4)
