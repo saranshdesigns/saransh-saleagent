@@ -491,12 +491,24 @@ Return JSON only with:
         return {"service": "unknown", "intent": "other", "urgency": "low"}
 
 
+def _get_ist_greeting() -> str:
+    """Return time-appropriate greeting based on current IST time."""
+    hour = datetime.now(IST).hour
+    if 5 <= hour < 12:
+        return "Good morning!"
+    elif 12 <= hour < 17:
+        return "Good afternoon!"
+    else:
+        return "Good evening!"
+
+
 def process_message(phone: str, message: str, image_data: str = None) -> str:
     """
     Main entry point. Process incoming message and return agent's reply.
     Uses gpt-4o-mini normally, gpt-4o if image is present.
     """
     conv = load_conversation(phone)
+    is_first_message = len(conv.get("messages", [])) == 0
 
     # Save incoming message
     add_message(phone, "user", message, image_url="[image]" if image_data else None)
@@ -525,6 +537,11 @@ def process_message(phone: str, message: str, image_data: str = None) -> str:
     )
 
     reply = response.choices[0].message.content.strip()
+
+    # Hardcode greeting on first message — don't rely on AI to do it
+    _greeting_words = ("good morning", "good afternoon", "good evening")
+    if is_first_message and not reply.lower().startswith(_greeting_words):
+        reply = f"{_get_ist_greeting()} {reply}"
 
     # Save assistant response
     add_message(phone, "assistant", reply)
