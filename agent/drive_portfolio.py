@@ -169,6 +169,43 @@ def _find_matching_folder(service, parent_id: str, target: str):
     return None
 
 
+def _apply_pair_rule(files: list) -> list:
+    """
+    Ensure 1.1 / 1.2 image pairs are always sent together.
+    If a file named 'Brand 1.1.ext' is selected, its '1.2' counterpart must follow (and vice versa).
+    A pair counts as 2 images toward MAX_SAMPLES.
+    """
+    name_map = {f["name"]: f for f in files}
+    result = []
+    seen = set()
+
+    for f in files:
+        if f["name"] in seen:
+            continue
+        seen.add(f["name"])
+        result.append(f)
+
+        stem = Path(f["name"]).stem  # e.g. "Brand 1.1"
+        if stem.endswith(" 1.1"):
+            base = stem[:-4]
+            for ext in [".jpg", ".jpeg", ".png"]:
+                pair_name = f"{base} 1.2{ext}"
+                if pair_name in name_map and pair_name not in seen:
+                    seen.add(pair_name)
+                    result.append(name_map[pair_name])
+                    break
+        elif stem.endswith(" 1.2"):
+            base = stem[:-4]
+            for ext in [".jpg", ".jpeg", ".png"]:
+                pair_name = f"{base} 1.1{ext}"
+                if pair_name in name_map and pair_name not in seen:
+                    seen.add(pair_name)
+                    result.insert(len(result) - 1, name_map[pair_name])
+                    break
+
+    return result
+
+
 def _collect_mixed(service, folder_id: str, per_subfolder: int = 2) -> list:
     """
     Collect mixed samples: direct images + up to per_subfolder from each subfolder.
@@ -189,7 +226,7 @@ def _collect_mixed(service, folder_id: str, per_subfolder: int = 2) -> list:
                 ss_images = list_images(service, ssf["id"])
                 all_files.extend(ss_images[:per_subfolder])
 
-    return all_files[:MAX_SAMPLES]
+    return _apply_pair_rule(all_files)[:MAX_SAMPLES]
 
 
 def download_to_cache(service, file_id: str, file_name: str) -> Path:
@@ -277,10 +314,10 @@ def get_drive_samples(service_name: str, category: str = None, packaging_type: s
                         files = list_images(svc, cat_folder_id)
                         if files:
                             # Merge uncategorized root images (directly in Packaging/)
-                            files = _merge_root_images(svc, service_folder_id, files)
+                            files = _apply_pair_rule(_merge_root_images(svc, service_folder_id, files))
                             return {
                                 "found": True, "exact_match": True,
-                                "files": _to_paths(svc, files),
+                                "files": _to_paths(svc, files[:MAX_SAMPLES]),
                                 "message": f"Here are our {packaging_type} packaging samples for {category}:"
                             }
 
@@ -300,10 +337,10 @@ def get_drive_samples(service_name: str, category: str = None, packaging_type: s
                 files = list_images(svc, cat_folder_id)
                 if files:
                     # Merge uncategorized root images (directly in Logo/ or Website/)
-                    files = _merge_root_images(svc, service_folder_id, files)
+                    files = _apply_pair_rule(_merge_root_images(svc, service_folder_id, files))
                     return {
                         "found": True, "exact_match": True,
-                        "files": _to_paths(svc, files),
+                        "files": _to_paths(svc, files[:MAX_SAMPLES]),
                         "message": f"Here are our {service_name} samples for {category}:"
                     }
 
