@@ -168,11 +168,37 @@ def _schedule_followup(phone: str, hours: float, is_final: bool = False):
 
 def _cancel_followups(phone: str):
     """Cancel all pending follow-ups when client responds."""
-    for suffix in ["6h", "final"]:
+    for suffix in ["6h", "final", "portfolio"]:
         try:
             scheduler.remove_job(f"followup_{suffix}_{phone}")
         except JobLookupError:
             pass
+
+
+def _schedule_portfolio_followup(phone: str):
+    """Schedule a 5-minute follow-up after portfolio is sent."""
+    job_id = f"followup_portfolio_{phone}"
+    try:
+        scheduler.remove_job(job_id)
+    except JobLookupError:
+        pass
+    run_at = datetime.datetime.now() + datetime.timedelta(minutes=5)
+    scheduler.add_job(_send_portfolio_followup, "date", run_date=run_at, args=[phone], id=job_id)
+
+
+async def _send_portfolio_followup(phone: str):
+    """5-min follow-up after portfolio send — nudge client to continue."""
+    from agent.conversation import load_conversation, add_message, ConversationStage
+    conv = load_conversation(phone)
+    if conv.get("stage") in [ConversationStage.HANDOFF, ConversationStage.CLOSED]:
+        return
+    # Only send if client hasn't replied since portfolio was sent
+    messages = conv.get("messages", [])
+    if messages and messages[-1].get("role") == "user":
+        return  # Client already replied, no need to nudge
+    msg = "Did you get a chance to check the samples? Would love to know your thoughts — happy to answer any questions or show more work! 😊"
+    await send_text(phone, msg)
+    add_message(phone, "assistant", msg)
 
 
 async def _send_first_followup(phone: str):
@@ -439,6 +465,9 @@ async def handle_portfolio_request(phone: str, text: str):
         reply = f"{result['message']}\n\n{PORTFOLIO_LINKS}\n\nWould you like something similar or a completely fresh concept?"
         await send_text(phone, reply)
         add_message(phone, "assistant", reply)
+
+    # Schedule 5-min follow-up after portfolio — if client doesn't reply, nudge them
+    _schedule_portfolio_followup(phone)
 
 
 async def trigger_handoff(phone: str):
