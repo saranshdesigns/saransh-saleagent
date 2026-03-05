@@ -7,7 +7,14 @@ Persists to JSON files in data/conversations/
 import json
 import os
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Optional
+
+IST = ZoneInfo("Asia/Kolkata")
+
+def _now_ist() -> str:
+    """Return current IST time as ISO string."""
+    return datetime.now(IST).isoformat()
 from pathlib import Path
 
 CONVERSATIONS_DIR = Path("data/conversations")
@@ -48,7 +55,7 @@ def load_conversation(phone: str) -> dict:
 
 
 def save_conversation(phone: str, data: dict):
-    data["last_updated"] = datetime.now().isoformat()
+    data["last_updated"] = _now_ist()
     path = _get_path(phone)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
@@ -59,8 +66,8 @@ def _new_conversation(phone: str) -> dict:
         "phone": phone,
         "stage": ConversationStage.NEW,
         "service": ServiceType.UNKNOWN,
-        "created_at": datetime.now().isoformat(),
-        "last_updated": datetime.now().isoformat(),
+        "created_at": _now_ist(),
+        "last_updated": _now_ist(),
         "messages": [],
         "collected_details": {},
         "seriousness_score": 0,
@@ -82,7 +89,7 @@ def add_message(phone: str, role: str, content: str, image_url: Optional[str] = 
     msg = {
         "role": role,
         "content": content,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": _now_ist()
     }
     if image_url:
         msg["image_url"] = image_url
@@ -123,7 +130,7 @@ def add_image(phone: str, image_url: str, caption: str = "", tag: str = "referen
         "url": image_url,
         "caption": caption,
         "tag": tag,  # "reference" | "existing_logo" | "sample_request"
-        "timestamp": datetime.now().isoformat()
+        "timestamp": _now_ist()
     })
     save_conversation(phone, conv)
 

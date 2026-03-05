@@ -47,9 +47,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
 function updateClock() {
   const now = new Date();
+  const tz = "Asia/Kolkata";
   document.getElementById("current-time").textContent =
-    now.toLocaleDateString("en-IN", { day: "numeric", month: "short" }) + "  " +
-    now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+    now.toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: tz }) + "  " +
+    now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: tz }) + " IST";
 }
 
 // ============================================================
@@ -531,12 +532,13 @@ function formatTime(isoStr) {
   try {
     const d = new Date(isoStr);
     const now = new Date();
-    const sameDay = d.toDateString() === now.toDateString();
+    const tz = "Asia/Kolkata";
+    const sameDay = d.toLocaleDateString("en-IN", { timeZone: tz }) === now.toLocaleDateString("en-IN", { timeZone: tz });
     if (sameDay) {
-      return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+      return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: tz });
     }
-    return d.toLocaleDateString("en-IN", { day: "numeric", month: "short" }) +
-      " " + d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+    return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: tz }) +
+      " " + d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: tz });
   } catch (e) {
     return "";
   }

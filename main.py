@@ -7,7 +7,12 @@ import os
 import json
 import asyncio
 import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
+
+_IST = ZoneInfo("Asia/Kolkata")
+def _now_ist_iso() -> str:
+    return datetime.datetime.now(_IST).isoformat()
 from fastapi import FastAPI, Request, Response, HTTPException, Depends
 from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
@@ -307,7 +312,7 @@ async def handle_client_message(phone: str, message: dict, msg_type: str):
             "phone": phone,
             "role": "user",
             "content": text,
-            "timestamp": datetime.datetime.now().isoformat()
+            "timestamp": _now_ist_iso()
         })
 
         # Greeting — split into 2 messages with 4s delay (more human feel)
@@ -356,7 +361,7 @@ async def handle_client_message(phone: str, message: dict, msg_type: str):
             "phone": phone,
             "role": "assistant",
             "content": reply,
-            "timestamp": datetime.datetime.now().isoformat(),
+            "timestamp": _now_ist_iso(),
             "stage": conv_state.get("stage"),
             "service": conv_state.get("service"),
             "seriousness_score": conv_state.get("seriousness_score", 0)
@@ -731,7 +736,7 @@ async def owner_send_message(phone: str, request: Request, _auth=Depends(require
         "phone": phone,
         "role": "owner",
         "content": message,
-        "timestamp": datetime.datetime.now().isoformat()
+        "timestamp": _now_ist_iso()
     })
 
     return {"status": "sent", "whatsapp_result": result}
