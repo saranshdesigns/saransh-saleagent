@@ -173,11 +173,37 @@ def _schedule_followup(phone: str, hours: float, is_final: bool = False):
 
 def _cancel_followups(phone: str):
     """Cancel all pending follow-ups when client responds."""
-    for suffix in ["6h", "final", "portfolio"]:
+    for suffix in ["6h", "final", "portfolio", "quick"]:
         try:
             scheduler.remove_job(f"followup_{suffix}_{phone}")
         except JobLookupError:
             pass
+
+
+def _schedule_quick_followup(phone: str):
+    """Schedule a 5-minute follow-up after any agent reply — nudge client for requirements."""
+    job_id = f"followup_quick_{phone}"
+    try:
+        scheduler.remove_job(job_id)
+    except JobLookupError:
+        pass
+    run_at = datetime.datetime.now() + datetime.timedelta(minutes=5)
+    scheduler.add_job(_send_quick_followup, "date", run_date=run_at, args=[phone], id=job_id)
+
+
+async def _send_quick_followup(phone: str):
+    """5-min follow-up nudge — ask client for their requirements."""
+    from agent.conversation import load_conversation, add_message, ConversationStage
+    conv = load_conversation(phone)
+    if conv.get("stage") in [ConversationStage.HANDOFF, ConversationStage.CLOSED]:
+        return
+    # Only send if client hasn't replied since agent's last message
+    messages = conv.get("messages", [])
+    if messages and messages[-1].get("role") == "user":
+        return  # Client already replied
+    msg = "Sir, please let me know your requirements so we can get started right away! What are you looking to create? 🙂"
+    await send_text(phone, msg)
+    add_message(phone, "assistant", msg)
 
 
 def _schedule_portfolio_followup(phone: str):
@@ -382,9 +408,10 @@ async def handle_client_message(phone: str, message: dict, msg_type: str):
             _cancel_followups(phone)
             await send_owner_alert(summary)
 
-        # Schedule 6h follow-up (only if conversation is still active, not at handoff)
+        # Schedule follow-ups (only if conversation is still active, not at handoff)
         _fresh_conv = load_conversation(phone)
         if _fresh_conv.get("stage") not in [CS.HANDOFF, CS.CLOSED]:
+            _schedule_quick_followup(phone)   # 5-min nudge if client goes quiet
             _schedule_followup(phone, hours=6, is_final=False)
 
         # Escalation alert

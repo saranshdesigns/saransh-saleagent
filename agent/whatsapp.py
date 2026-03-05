@@ -125,7 +125,11 @@ async def send_owner_alert(summary: dict):
 ⚡ *Action Required:* Please message the client to proceed with advance payment and project initiation."""
 
     if OWNER_PHONE:
-        await send_text(OWNER_PHONE, alert_message)
+        print(f"📣 Sending owner alert to {OWNER_PHONE}...")
+        result = await send_text(OWNER_PHONE, alert_message)
+        print(f"📣 Owner alert API response: {result}")
+    else:
+        print("⚠️ OWNER_PHONE not set — alert not sent!")
     return alert_message
 
 
@@ -143,7 +147,9 @@ Client Phone: {phone}
 What should I reply?"""
 
     if OWNER_PHONE:
-        await send_text(OWNER_PHONE, message)
+        print(f"⚠️ Sending escalation alert to {OWNER_PHONE}...")
+        result = await send_text(OWNER_PHONE, message)
+        print(f"⚠️ Escalation alert API response: {result}")
 
 
 async def download_media(media_id: str) -> bytes:
