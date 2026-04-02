@@ -35,16 +35,99 @@
   },
   "website": {
     "starter": {
-      "price": 6999,
-      "token_amount": 2000,
-      "min_token": 1000,
-      "label": "Starter Website (5 pages)"
+      "name": "Starter Website",
+      "price_min": 6999,
+      "price_max": 8999,
+      "negotiated_min": 6500,
+      "pages": "1 page",
+      "timeline": "2-3 days",
+      "revisions": 5,
+      "advance": 2000,
+      "advance_min": 1000,
+      "includes": [
+        "1-page custom-coded website (no templates)",
+        "Mobile responsive design",
+        "WhatsApp & call button integration",
+        "Lead capture form",
+        "Standard SEO setup",
+        "Free domain & hosting (1 year)",
+        "Content support",
+        "Banners & visuals included"
+      ]
     },
     "business": {
-      "price": 11999,
-      "token_amount": 2000,
-      "min_token": 1000,
-      "label": "Business Website (8-10 pages)"
+      "name": "Business Website",
+      "price_min": 9999,
+      "price_max": 14999,
+      "negotiated_min": 9500,
+      "pages": "5-8 pages",
+      "timeline": "5-7 days",
+      "revisions": "6-8",
+      "advance": 2000,
+      "advance_min": 1000,
+      "includes": [
+        "5–8 pages custom-coded (no templates)",
+        "Custom UI design",
+        "Mobile optimized",
+        "Lead capture system",
+        "Standard SEO setup",
+        "Free domain & hosting (1 year)",
+        "Content support",
+        "Banners & visuals included"
+      ]
+    },
+    "premium": {
+      "name": "Premium Business Website",
+      "price_min": 19999,
+      "price_max": 29999,
+      "negotiated_min": 18999,
+      "pages": "8-12 pages",
+      "timeline": "7-10 days",
+      "revisions": "Unlimited",
+      "advance": 5000,
+      "advance_min": 3000,
+      "includes": [
+        "8–12 pages custom-coded (no templates)",
+        "Advanced UI/UX design",
+        "Blog setup",
+        "Analytics integration",
+        "Conversion-focused layout",
+        "Free domain & hosting (1 year)",
+        "Content support",
+        "Banners & visuals included"
+      ]
+    },
+    "ecommerce": {
+      "name": "Ecommerce Website (Shopify)",
+      "price_min": 14999,
+      "price_max": 34999,
+      "negotiated_min": 14000,
+      "platform": "Shopify only",
+      "timeline": "7-10 days",
+      "revisions": 5,
+      "advance": 5000,
+      "advance_min": 3000,
+      "includes": [
+        "Complete Shopify store setup",
+        "Custom store design (not default Shopify template)",
+        "Product upload & cataloguing",
+        "Payment gateway setup",
+        "Shipping configuration",
+        "Full Shopify admin access",
+        "Mobile optimized",
+        "Content support"
+      ]
+    },
+    "addons": {
+      "advanced_seo": { "min": 2000, "max": 5000 },
+      "website_chatbot": { "min": 5000, "max": 15000, "description": "Chat widget on website for real-time visitor queries" },
+      "branding_kit": { "min": 5000, "description": "Logo + brand identity" },
+      "yearly_maintenance": { "min": 1999, "max": 4999 }
+    },
+    "hosting_renewal": {
+      "yearly_cost_min": 3000,
+      "yearly_cost_max": 5000,
+      "note": "Depends on website size and server load"
     }
   }
 }

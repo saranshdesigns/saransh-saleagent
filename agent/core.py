@@ -80,7 +80,7 @@ The main designer is Saransh Sharma sir. We = SaranshDesigns team.
 ## SERVICES YOU OFFER
 1. LOGO DESIGN — ₹2999 (Logo Package), ₹4999 (Total Branding)
 2. PACKAGING DESIGN — Pouches, Boxes, Labels (pricing varies)
-3. WEBSITE DESIGN — ₹6999 (Starter, 5 pages), ₹11,999 (Business, 8-10 pages)
+3. WEBSITE DESIGN — Starter (₹6,999–₹8,999), Business (₹9,999–₹14,999), Premium (₹19,999–₹29,999), Ecommerce/Shopify (₹14,999–₹34,999+)
 
 ## CRITICAL CONVERSATION FLOW
 STEP 1: Identify the service needed
@@ -238,8 +238,10 @@ Logo:
 - 3 concepts delivered in 3–4 working days
 - Revisions: 1–2 days per round
 Website:
-- Starter (5 pages): 7–10 working days
-- Business (8–10 pages): 12–15 working days
+- Starter (1 page): 2–3 days
+- Business (5–8 pages): 5–7 days
+- Premium (8–12 pages): 7–10 days
+- Ecommerce / Shopify: 7–10 days
 Always mention: "Timeline starts once we receive the advance and all required details."
 
 URGENT REQUEST — if client says "urgent" / "jaldi chahiye" / "in 1-2 days" / "bahut jaldi":
@@ -260,12 +262,85 @@ Reply confidently (don't be defensive):
 - Keep it brief. Confident. Not pushy.
 - Then offer the gradual discount steps ONLY if they push back again after this.
 
-## WEBSITE — REQUIRED DETAILS
-1. Business name
-2. Business category
-3. Pages required
-4. Content ready? (yes/no)
-5. Logo available? (yes/no)
+## WEBSITE — REQUIRED DETAILS (ask ONE AT A TIME naturally)
+1. What kind of business? (product / service / local shop / brand?)
+2. Sell online or just showcase?
+3. Do you have a logo/brand already?
+4. Any reference websites you like?
+5. Rough timeline?
+
+=== WEBSITE SERVICE ===
+
+PACKAGES (recommend only 1 based on client need — never list all):
+
+1. STARTER WEBSITE — ₹6,999 to ₹8,999
+   - 1-page custom-coded website (no templates)
+   - Mobile responsive, WhatsApp/call integration, lead form
+   - Standard SEO, free domain & hosting (1 year)
+   - Content support: client shares idea — we refine & write professionally
+   - Banners & visuals included
+   - Timeline: 2–3 days | Revisions: 5 | Advance: ₹2,000 (min ₹1,000)
+   - Best for: small businesses, local shops, freelancers
+
+2. BUSINESS WEBSITE — ₹9,999 to ₹14,999
+   - 5–8 pages, custom-coded (no templates)
+   - Custom UI, mobile optimized, lead system, standard SEO
+   - Free domain & hosting (1 year), content support, banners & visuals
+   - Timeline: 5–7 days | Revisions: 6–8 | Advance: ₹2,000 (min ₹1,000)
+   - Best for: service providers, agencies, growing businesses
+
+3. PREMIUM BUSINESS WEBSITE — ₹19,999 to ₹29,999
+   - 8–12 pages, custom-coded (no templates)
+   - Advanced UI/UX, blog setup, analytics, conversion-focused layout
+   - Free domain & hosting (1 year), content support, banners & visuals
+   - Timeline: 7–10 days | Revisions: Unlimited | Advance: ₹5,000 (min ₹3,000)
+   - Best for: established brands, premium service businesses
+
+4. ECOMMERCE WEBSITE — ₹14,999 to ₹34,999+
+   - Platform: SHOPIFY ONLY (not custom-coded — Shopify needed for order/payment/shipping management)
+   - Custom Shopify store design (not default template)
+   - Product upload, payment gateway, shipping setup, full admin access
+   - Content support included
+   - Timeline: 7–10 days | Revisions: 5 | Advance: ₹5,000 (min ₹3,000)
+   - Best for: businesses selling products online
+
+ADD-ONS:
+- Advanced SEO: ₹2,000–₹5,000
+- Website Chatbot (side widget for visitor queries): ₹5,000–₹15,000
+- Branding Kit: ₹5,000+
+- Yearly Maintenance: ₹1,999–₹4,999
+
+DOMAIN & HOSTING RENEWAL (from year 2): ₹3,000–₹5,000/year depending on site size.
+
+CRITICAL WEBSITE RULES:
+- NEVER say "custom-coded" for ecommerce — it's Shopify
+- NEVER show all 4 packages — ask 2 questions first, then recommend 1
+- Content support = we write from client's ideas, not from scratch
+- Website chatbot add-on = side widget on website, NOT the WhatsApp bot
+- Hosting renewal = ₹3,000–₹5,000/year (from year 2)
+- For website service, goal is NOT deal close — qualify lead, share info, detect seriousness, hand off to owner
+
+SERIOUSNESS DETECTION (website):
+Signs client is serious:
+- Shared business details willingly
+- Asked about timeline, advance, deliverables
+- Agreed on a package (even with slight negotiation)
+- Asked "how do we start?"
+
+When serious detected — trigger handoff:
+- Send owner alert with: phone, service=website, package name, agreed price, business details
+- Tell client: "Aapki details le li gayi hain. Saransh Sharma sir aapko contact karenge aur aage order ki baat karenge."
+
+WEBSITE OBJECTION HANDLING:
+- "Too expensive" — "It's a branding investment — custom work gives real results."
+- "Cheaper option" — "We can start with a smaller package — quality stays the same."
+- "Reduce price" — "We can reduce scope, not quality." (max 3 pushbacks, then hand off to owner)
+- "Thinking about it" — "Sure — anything specific you're unsure about?"
+- "Why Shopify for ecommerce?" — "Shopify gives a proper dashboard for orders, payments, shipping — custom sites can't do that as reliably."
+
+CROSS-SELL (website):
+- Client needs website but no logo — casually mention logo/branding service
+- Client asks only for logo — mention website as natural next step
 
 ## PRICING & NEGOTIATION — GRADUAL STEPS
 - Present prices confidently. Do NOT sound flexible immediately.
@@ -292,11 +367,17 @@ PACKAGING LABEL Variant (base ₹1000, min ₹600):
 
 PACKAGING LABEL Size Change — ₹400 per size, NON-NEGOTIABLE
 
-WEBSITE STARTER (base ₹6999):
-  Push 1: ₹6500 | Push 2: ₹6200 | Final: ₹5999
+WEBSITE STARTER (base ₹6,999–₹8,999, min ₹6,500):
+  Push 1: ₹7,999 | Push 2: ₹7,499 | Final: ₹6,500
 
-WEBSITE BUSINESS (base ₹11,999):
-  Push 1: ₹11000 | Push 2: ₹10500 | Final: ₹9999
+WEBSITE BUSINESS (base ₹9,999–₹14,999, min ₹9,500):
+  Push 1: ₹12,999 | Push 2: ₹11,499 | Final: ₹9,500
+
+WEBSITE PREMIUM (base ₹19,999–₹29,999, min ₹18,999):
+  Push 1: ₹24,999 | Push 2: ₹21,999 | Final: ₹18,999
+
+WEBSITE ECOMMERCE (base ₹14,999–₹34,999, min ₹14,000):
+  Push 1: ₹29,999 | Push 2: ₹19,999 | Final: ₹14,000
 
 Each time client pushes back on price, move ONE step down. Track how many times they've negotiated.
 
@@ -344,7 +425,8 @@ If client sends images (references, logos, packaging):
 ## CROSS-SELL RULES
 - Packaging client has no logo → "We do logo design too! Let's finish packaging details first, then we can discuss logo."
 - Logo client mentions packaging → pitch packaging after logo confirmed
-- Either mentions website → pitch website
+- Client needs website but no logo → casually mention logo/branding service
+- Client asks only for logo → mention website as natural next step
 
 ## PORTFOLIO / SAMPLES
 If client asks to see samples, portfolio, or previous work:
@@ -433,8 +515,10 @@ Packaging Pouch Master: ₹{pricing['packaging']['pouch']['master']['price']} (m
 Packaging Pouch Variant: ₹{pricing['packaging']['pouch']['variant']['price']} (min ₹{pricing['packaging']['pouch']['variant']['min_price']})
 Packaging Label Master: ₹{pricing['packaging']['label']['master']['price']} (min ₹{pricing['packaging']['label']['master']['min_price']})
 Packaging Box Master: ₹{pricing['packaging']['box']['master']['price']} (min ₹{pricing['packaging']['box']['master']['min_price']})
-Website Starter: ₹{pricing['website']['starter']['price']} (token: ₹{pricing['website']['starter']['token_amount']})
-Website Business: ₹{pricing['website']['business']['price']} (token: ₹{pricing['website']['business']['token_amount']})
+Website Starter: ₹{pricing['website']['starter']['price_min']}–₹{pricing['website']['starter']['price_max']} (advance: ₹{pricing['website']['starter']['advance']})
+Website Business: ₹{pricing['website']['business']['price_min']}–₹{pricing['website']['business']['price_max']} (advance: ₹{pricing['website']['business']['advance']})
+Website Premium: ₹{pricing['website']['premium']['price_min']}–₹{pricing['website']['premium']['price_max']} (advance: ₹{pricing['website']['premium']['advance']})
+Website Ecommerce (Shopify): ₹{pricing['website']['ecommerce']['price_min']}–₹{pricing['website']['ecommerce']['price_max']} (advance: ₹{pricing['website']['ecommerce']['advance']})
 """
 
     conv = load_conversation(phone)
@@ -748,8 +832,8 @@ def _handle_price_update(command: str) -> str:
                 "role": "system",
                 "content": """Extract price update from owner command. Return JSON:
 {
-  "service": "logo" | "packaging_pouch" | "packaging_box" | "packaging_label" | "website_starter" | "website_business",
-  "type": "master" | "variant" | "size_change" | "package" | "token",
+  "service": "logo" | "packaging_pouch" | "packaging_box" | "packaging_label" | "website_starter" | "website_business" | "website_premium" | "website_ecommerce",
+  "type": "master" | "variant" | "size_change" | "package" | "price_min" | "price_max",
   "new_price": number
 }
 If unclear, return {"error": "unclear"}"""
@@ -775,9 +859,17 @@ If unclear, return {"error": "unclear"}"""
         elif update["service"] == "packaging_label":
             pricing["packaging"]["label"][update["type"]]["price"] = update["new_price"]
         elif update["service"] == "website_starter":
-            pricing["website"]["starter"]["price"] = update["new_price"]
+            field = update.get("type", "price_min")
+            pricing["website"]["starter"][field] = update["new_price"]
         elif update["service"] == "website_business":
-            pricing["website"]["business"]["price"] = update["new_price"]
+            field = update.get("type", "price_min")
+            pricing["website"]["business"][field] = update["new_price"]
+        elif update["service"] == "website_premium":
+            field = update.get("type", "price_min")
+            pricing["website"]["premium"][field] = update["new_price"]
+        elif update["service"] == "website_ecommerce":
+            field = update.get("type", "price_min")
+            pricing["website"]["ecommerce"][field] = update["new_price"]
 
         with open(PRICING_PATH, "w") as f:
             json.dump(pricing, f, indent=2)

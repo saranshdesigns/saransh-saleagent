@@ -7,6 +7,9 @@ import os
 import json
 import asyncio
 import datetime
+import hmac
+import hashlib
+from collections import deque
 from zoneinfo import ZoneInfo
 from pathlib import Path
 
@@ -14,10 +17,13 @@ _IST = ZoneInfo("Asia/Kolkata")
 def _now_ist_iso() -> str:
     return datetime.datetime.now(_IST).isoformat()
 from fastapi import FastAPI, Request, Response, HTTPException, Depends
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.websockets import WebSocket, WebSocketDisconnect
 from dotenv import load_dotenv
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.base import JobLookupError
 
@@ -33,7 +39,10 @@ from agent.dashboard_auth import verify_password, create_access_token, require_a
 
 load_dotenv()
 
+limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="SaranshDesigns AI Agent", version="1.0.0")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Background scheduler for follow-up messages
 scheduler = AsyncIOScheduler()
@@ -51,6 +60,25 @@ async def shutdown_event():
 
 VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN", "saranshdesigns_webhook_2024")
 OWNER_PHONE = os.getenv("OWNER_PHONE", "918850069662")
+META_APP_SECRET = os.getenv("META_APP_SECRET", "")
+
+
+def _verify_webhook_signature(raw_body: bytes, signature_header: str) -> bool:
+    """Verify Meta webhook signature using HMAC-SHA256."""
+    if not META_APP_SECRET:
+        print("⚠️ META_APP_SECRET not set — skipping signature verification")
+        return True
+    if not signature_header:
+        return False
+    expected = "sha256=" + hmac.new(
+        META_APP_SECRET.encode("utf-8"), raw_body, hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature_header)
+
+
+# --- Message Deduplication (in-memory, max 500 wamids) ---
+_seen_wamids: deque = deque(maxlen=500)
+_seen_wamids_set: set = set()
 
 # Serve dashboard static files
 _dashboard_path = Path("dashboard")
@@ -112,8 +140,16 @@ async def verify_webhook(request: Request):
 # ============================================================
 
 @app.post("/webhook")
+@limiter.limit("60/minute")
 async def receive_message(request: Request):
-    body = await request.json()
+    # Read raw body FIRST for signature verification, then parse JSON
+    raw_body = await request.body()
+    signature_header = request.headers.get("X-Hub-Signature-256", "")
+    if not _verify_webhook_signature(raw_body, signature_header):
+        print("🚫 Webhook signature verification FAILED — rejecting request")
+        return Response(status_code=403, content="Invalid signature")
+
+    body = json.loads(raw_body)
     print(f"\n📩 Webhook received: {json.dumps(body, indent=2)[:500]}")
 
     try:
@@ -127,6 +163,18 @@ async def receive_message(request: Request):
             return Response(status_code=200)
 
         for message in messages:
+            # --- Message Deduplication ---
+            wamid = message.get("id", "")
+            if wamid:
+                if wamid in _seen_wamids_set:
+                    print(f"🔁 Duplicate wamid {wamid} — skipping")
+                    continue
+                # Add to deque; evict oldest if full
+                if len(_seen_wamids) >= _seen_wamids.maxlen:
+                    evicted = _seen_wamids[0]
+                    _seen_wamids_set.discard(evicted)
+                _seen_wamids.append(wamid)
+                _seen_wamids_set.add(wamid)
             phone = message.get("from", "")
             msg_type = message.get("type", "")
             print(f"📱 Message from: {phone} | Type: {msg_type}")
@@ -575,6 +623,7 @@ def _get_recent_text(conv: dict, last_n: int = 6) -> str:
 # ============================================================
 
 @app.post("/auth/login")
+@limiter.limit("10/minute")
 async def login(request: Request):
     body = await request.json()
     password = body.get("password", "")
@@ -638,7 +687,8 @@ def _build_analytics() -> dict:
 
 
 @app.get("/api/analytics")
-async def get_analytics(_auth=Depends(require_auth)):
+@limiter.limit("30/minute")
+async def get_analytics(request: Request, _auth=Depends(require_auth)):
     return _build_analytics()
 
 
@@ -647,7 +697,8 @@ async def get_analytics(_auth=Depends(require_auth)):
 # ============================================================
 
 @app.get("/api/conversations")
-async def list_conversations(_auth=Depends(require_auth)):
+@limiter.limit("30/minute")
+async def list_conversations(request: Request, _auth=Depends(require_auth)):
     """Return all conversations as sorted list of summaries."""
     conv_dir = Path("data/conversations")
     if not conv_dir.exists():
@@ -682,7 +733,8 @@ async def list_conversations(_auth=Depends(require_auth)):
 
 
 @app.get("/api/conversations/{phone}")
-async def get_conversation(phone: str, _auth=Depends(require_auth)):
+@limiter.limit("30/minute")
+async def get_conversation(phone: str, request: Request, _auth=Depends(require_auth)):
     """Return full conversation including all messages."""
     conv = load_conversation(phone)
     # If conversation doesn't actually exist (newly created empty state), 404
@@ -692,7 +744,8 @@ async def get_conversation(phone: str, _auth=Depends(require_auth)):
 
 
 @app.delete("/api/conversations/{phone}")
-async def reset_conversation_endpoint(phone: str, _auth=Depends(require_auth)):
+@limiter.limit("30/minute")
+async def reset_conversation_endpoint(phone: str, request: Request, _auth=Depends(require_auth)):
     """
     Completely reset a conversation — deletes all history and stage.
     Used for testing or when owner wants to give a contact a fresh start.
@@ -711,7 +764,8 @@ async def reset_conversation_endpoint(phone: str, _auth=Depends(require_auth)):
 
 
 @app.delete("/api/conversations/{phone}/messages/{msg_index}")
-async def delete_message(phone: str, msg_index: int, _auth=Depends(require_auth)):
+@limiter.limit("30/minute")
+async def delete_message(phone: str, msg_index: int, request: Request, _auth=Depends(require_auth)):
     """
     Remove a specific message from conversation context by index.
     Used when AI sends a wrong message — removes it from AI memory
@@ -740,6 +794,7 @@ async def delete_message(phone: str, msg_index: int, _auth=Depends(require_auth)
 
 
 @app.post("/api/conversations/{phone}/send")
+@limiter.limit("30/minute")
 async def owner_send_message(phone: str, request: Request, _auth=Depends(require_auth)):
     """
     Owner sends a message from the dashboard.
