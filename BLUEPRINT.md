@@ -707,7 +707,7 @@ Then manually: upload .env + Google credentials + start service
 | 6 | Conversation analytics (conversion rate, avg response time) | LOW |
 | 7 | CRM integration (push leads to Google Sheets or Notion) | LOW |
 | 8 | Voice message support (speech-to-text) | LOW |
-| 9 | Template messages for owner alerts (bypass 24h window) | MEDIUM |
+| 9 | ~~Template messages for owner alerts (bypass 24h window)~~ | 🔄 IN PROGRESS — Code deployed. Template `owner_alert_handoff` must be approved in Meta Business Manager (24-48h). Once approved, 24h window fully bypassed. |
 
 ### Changelog
 

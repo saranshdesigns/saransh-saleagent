@@ -88,8 +88,28 @@ async def send_portfolio_samples(to: str, image_paths: list, intro_text: str = "
         await send_image(to, path, caption)
 
 
-async def send_owner_alert(summary: dict):
-    """Send an alert to the Owner when a sale is closing or escalation needed."""
+async def _send_template_message(to: str, template_name: str, body_params: list[str]):
+    """Send a template message (bypasses 24h window restriction)."""
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "template",
+        "template": {
+            "name": template_name,
+            "language": {"code": "en"},
+            "components": [{
+                "type": "body",
+                "parameters": [{"type": "text", "text": p} for p in body_params]
+            }]
+        }
+    }
+    async with httpx.AsyncClient() as client:
+        response = await client.post(API_URL, json=payload, headers=HEADERS)
+        return response.json()
+
+
+def _build_alert_message(summary: dict) -> str:
+    """Build the formatted owner alert text from a conversation summary."""
     details = summary.get("details", {})
     details_text = "\n".join([f"  • {k}: {v}" for k, v in details.items()]) if details else "  (still collecting)"
 
@@ -97,39 +117,63 @@ async def send_owner_alert(summary: dict):
     projects = summary.get("projects", [])
     projects_text = ""
     if projects:
-        projects_text = "\n\n📦 *Multiple Projects:*"
+        projects_text = "\n\n📦 Multiple Projects:"
         for p in projects:
             p_details = "\n".join([f"    - {k}: {v}" for k, v in p.get("details", {}).items()]) or "    (details pending)"
-            projects_text += f"\n  *Project {p['id']} — {p['service'].upper()}:*\n{p_details}\n  Agreed: {'₹' + str(p['agreed_price']) if p.get('agreed_price') else 'TBD'}"
+            projects_text += f"\n  Project {p['id']} — {p['service'].upper()}:\n{p_details}\n  Agreed: {'₹' + str(p['agreed_price']) if p.get('agreed_price') else 'TBD'}"
 
     # Existing logo flag
     existing_logos = [img for img in summary.get("images_received", []) if img.get("tag") == "existing_logo"]
-    logo_note = "\n⚠️ *Logo Redesign:* Client has an existing logo — this is an improvement, not fresh design." if existing_logos else ""
+    logo_note = "\n⚠️ Logo Redesign: Client has an existing logo — this is an improvement, not fresh design." if existing_logos else ""
 
-    alert_message = f"""🔔 *SaranshDesigns Agent Alert*
+    return f"""🔔 SaranshDesigns Agent Alert
 
-📋 *Service:* {summary.get('service', 'Unknown').upper()}
-📱 *Client:* {summary.get('phone', 'Unknown')}
-🎯 *Stage:* {summary.get('stage', 'Unknown').replace('_', ' ').title()}
-📊 *Seriousness Score:* {summary.get('seriousness_score', 0)}/100
+📋 Service: {summary.get('service', 'Unknown').upper()}
+📱 Client: {summary.get('phone', 'Unknown')}
+🎯 Stage: {summary.get('stage', 'Unknown').replace('_', ' ').title()}
+📊 Seriousness Score: {summary.get('seriousness_score', 0)}/100
 
-📝 *Details Collected:*
+📝 Details Collected:
 {details_text}
 
-💰 *Agreed Price:* {'₹' + str(summary.get('agreed_price')) if summary.get('agreed_price') else 'Not yet confirmed'}
-🖼️ *Images Received:* {summary.get('images_count', 0)}{logo_note}{projects_text}
+💰 Agreed Price: {'₹' + str(summary.get('agreed_price')) if summary.get('agreed_price') else 'Not yet confirmed'}
+🖼️ Images Received: {summary.get('images_count', 0)}{logo_note}{projects_text}
 
-📌 *Notes:*
+📌 Notes:
 {chr(10).join(['  • ' + n for n in summary.get('notes', [])]) if summary.get('notes') else '  None'}
 
-⚡ *Action Required:* Please message the client to proceed with advance payment and project initiation."""
+⚡ Action Required: Please message the client to proceed with advance payment and project initiation."""
 
-    if OWNER_PHONE:
-        print(f"📣 Sending owner alert to {OWNER_PHONE}...")
-        result = await send_text(OWNER_PHONE, alert_message)
-        print(f"📣 Owner alert API response: {result}")
-    else:
+
+async def send_owner_alert(summary: dict):
+    """
+    Send an alert to the Owner when a sale is closing or escalation needed.
+    Primary: template message (bypasses 24h window).
+    Fallback: plain text (works only within 24h window).
+    """
+    alert_message = _build_alert_message(summary)
+
+    if not OWNER_PHONE:
         print("⚠️ OWNER_PHONE not set — alert not sent!")
+        return alert_message
+
+    # --- Primary: Template message (no 24h restriction) ---
+    print(f"📣 Sending owner alert via TEMPLATE to {OWNER_PHONE}...")
+    template_result = await _send_template_message(
+        OWNER_PHONE, "owner_alert_handoff", [alert_message]
+    )
+    print(f"📣 Template API response: {template_result}")
+
+    # Check if template succeeded
+    if template_result.get("messages"):
+        print("✅ Owner alert sent via template successfully.")
+        return alert_message
+
+    # --- Fallback: Plain text (only works within 24h window) ---
+    print(f"⚠️ Template failed — falling back to plain text for {OWNER_PHONE}...")
+    fallback_result = await send_text(OWNER_PHONE, alert_message)
+    print(f"📣 Fallback plain text API response: {fallback_result}")
+
     return alert_message
 
 
