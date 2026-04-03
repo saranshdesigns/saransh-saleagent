@@ -715,6 +715,8 @@ Then manually: upload .env + Google credentials + start service
 |------|--------|
 | 2026-04-01 | Security fixes: webhook signature verification, rate limiting, message deduplication |
 | 2026-04-02 | Website service package fully updated to v3 — new pricing, packages, ecommerce clarification, Shopify-only rule, seriousness detection, updated system prompt and pricing.json |
+| 2026-04-03 | Website portfolio links added to system prompt (5 live sites) with detail-handling rules |
+| 2026-04-03 | Telegram parallel alert system added (`agent/telegram_alert.py`) — owner alerts now fire on both WhatsApp and Telegram |
 
 ---
 

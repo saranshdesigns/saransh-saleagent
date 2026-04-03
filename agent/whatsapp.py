@@ -8,6 +8,7 @@ import httpx
 import base64
 from pathlib import Path
 from dotenv import load_dotenv
+from agent.telegram_alert import send_telegram_alert
 
 load_dotenv()
 
@@ -164,6 +165,13 @@ async def send_owner_alert(summary: dict):
     )
     print(f"📣 Template API response: {template_result}")
 
+    # --- Parallel: Telegram alert (backup channel, always attempted) ---
+    try:
+        tg_ok = await send_telegram_alert(alert_message)
+        print(f"📨 Telegram alert: {'sent ✅' if tg_ok else 'skipped/failed'}")
+    except Exception as e:
+        print(f"📨 Telegram alert error (non-fatal): {e}")
+
     # Check if template succeeded
     if template_result.get("messages"):
         print("✅ Owner alert sent via template successfully.")
@@ -194,6 +202,13 @@ What should I reply?"""
         print(f"⚠️ Sending escalation alert to {OWNER_PHONE}...")
         result = await send_text(OWNER_PHONE, message)
         print(f"⚠️ Escalation alert API response: {result}")
+
+    # Parallel: Telegram
+    try:
+        tg_ok = await send_telegram_alert(message)
+        print(f"📨 Telegram escalation: {'sent ✅' if tg_ok else 'skipped/failed'}")
+    except Exception as e:
+        print(f"📨 Telegram escalation error (non-fatal): {e}")
 
 
 async def download_media(media_id: str) -> bytes:
