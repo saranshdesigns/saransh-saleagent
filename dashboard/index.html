@@ -25,7 +25,10 @@
 
   <!-- Top bar -->
   <div class="top-bar">
-    <h2>SaranshDesigns &mdash; Agent Dashboard</h2>
+    <div class="top-bar-left">
+      <span class="sd-mark">SD</span>
+      <h2>SaranshDesigns &mdash; Agent Dashboard</h2>
+    </div>
     <div class="right">
       <div class="ws-status">
         <span class="status-dot" id="ws-dot"></span>
@@ -39,16 +42,25 @@
   <!-- Analytics row -->
   <div class="analytics-bar">
     <div class="stat-card">
-      <div class="stat-num" id="stat-total">—</div>
-      <div class="stat-label">Total Chats</div>
+      <span class="stat-icon">💬</span>
+      <div class="stat-text">
+        <div class="stat-num" id="stat-total">—</div>
+        <div class="stat-label">Total Chats</div>
+      </div>
     </div>
     <div class="stat-card">
-      <div class="stat-num" id="stat-today">—</div>
-      <div class="stat-label">Active Today</div>
+      <span class="stat-icon">⚡</span>
+      <div class="stat-text">
+        <div class="stat-num" id="stat-today">—</div>
+        <div class="stat-label">Active Today</div>
+      </div>
     </div>
     <div class="stat-card">
-      <div class="stat-num" id="stat-handoffs">—</div>
-      <div class="stat-label">Handoffs</div>
+      <span class="stat-icon">🤝</span>
+      <div class="stat-text">
+        <div class="stat-num" id="stat-handoffs">—</div>
+        <div class="stat-label">Handoffs</div>
+      </div>
     </div>
     <div class="divider-v"></div>
     <div class="stage-mini" id="stage-breakdown"></div>
