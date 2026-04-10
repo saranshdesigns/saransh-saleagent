@@ -547,7 +547,7 @@ def _get_ist_greeting() -> str:
         return "Good evening!"
 
 
-def process_message(phone: str, message: str, image_data: str = None) -> str:
+def process_message(phone: str, message: str, image_data: str = None, wamid: str = None) -> str:
     """
     Main entry point. Process incoming message and return agent's reply.
     Uses gpt-4o-mini normally, gpt-4o if image is present.
@@ -556,7 +556,7 @@ def process_message(phone: str, message: str, image_data: str = None) -> str:
     is_first_message = len(conv.get("messages", [])) == 0
 
     # Save incoming message
-    add_message(phone, "user", message, image_url="[image]" if image_data else None)
+    add_message(phone, "user", message, image_url="[image]" if image_data else None, wamid=wamid)
 
     # Quick intent detection for routing (cheap call)
     intent = detect_intent(message)

@@ -16,6 +16,7 @@
   "call_request_message": "Sure, I will arrange a call for you. Please wait, I'll coordinate with the Owner and you will receive a call shortly.",
   "learned_behaviors": {},
   "blocked_categories": [],
+  "blocked_phones": [],
   "custom_instructions": {
     "logo": "",
     "packaging": "",

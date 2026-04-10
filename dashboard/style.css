@@ -995,3 +995,186 @@ body {
 
 /* ===== UTILITY ===== */
 .hidden { display: none !important; }
+
+/* ===== LIGHT THEME ===== */
+body.light-theme {
+  --bg:          #f0f2f5;
+  --card:        #ffffff;
+  --surface:     #f7f8fa;
+  --border:      #e2e5e9;
+  --border-hi:   #d0d5dd;
+  --text-1:      #1a1d23;
+  --text-2:      #5a6070;
+  --text-3:      #9aa0ad;
+  --shadow:      0 1px 3px rgba(0,0,0,0.1);
+  --shadow-lg:   0 8px 32px rgba(0,0,0,0.15);
+}
+body.light-theme .msg.user .bubble     { background: #e8eaf0; color: var(--text-1); }
+body.light-theme .msg.assistant .bubble { background: #d5f0e0; color: #0a3020; }
+body.light-theme .msg.owner .bubble    { background: #128C7E; color: #fff; }
+
+/* ===== THEME TOGGLE BUTTON ===== */
+.theme-toggle {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 15px;
+  color: var(--text-2);
+  transition: background 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+}
+.theme-toggle:hover {
+  background: var(--surface);
+  border-color: var(--border-hi);
+}
+
+/* ===== CONVERSATION MENU BUTTON ===== */
+.conv-menu-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-2);
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
+}
+.conv-item:hover .conv-menu-btn { opacity: 1; }
+
+/* ===== CONVERSATION CONTEXT MENU ===== */
+.conv-menu {
+  position: fixed;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg);
+  z-index: 2000;
+  min-width: 170px;
+  overflow: hidden;
+}
+.conv-menu-item {
+  padding: 10px 16px;
+  font-size: 13px;
+  color: var(--text-1);
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.conv-menu-item:hover { background: var(--surface); }
+.conv-menu-item.danger { color: var(--danger); }
+.conv-menu-item.danger:hover { background: var(--danger-dim); }
+
+/* ===== CHAT ACTIONS TOOLBAR ===== */
+.chat-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.chat-action-btn {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  color: var(--text-2);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+.chat-action-btn:hover {
+  background: var(--accent-glow);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ===== MODALS ===== */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 3000;
+}
+.modal-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  width: 400px;
+  max-width: calc(100vw - 40px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: var(--shadow-lg);
+}
+.modal-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-1);
+  margin-bottom: 4px;
+}
+.modal-input {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-1);
+  font-size: 13px;
+  font-family: inherit;
+  padding: 9px 12px;
+  width: 100%;
+  transition: border-color 0.15s;
+  outline: none;
+  resize: vertical;
+}
+.modal-input:focus { border-color: var(--accent); }
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+/* ===== EMOJI REACTION PICKER ===== */
+.emoji-picker {
+  position: fixed;
+  display: flex;
+  gap: 4px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  padding: 6px 10px;
+  box-shadow: var(--shadow-lg);
+  z-index: 2500;
+}
+.emoji-picker span {
+  font-size: 22px;
+  cursor: pointer;
+  transition: transform 0.1s;
+  line-height: 1;
+}
+.emoji-picker span:hover { transform: scale(1.3); }
+
+/* ===== REACT BUTTON ===== */
+.react-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  opacity: 0.4;
+  transition: opacity 0.15s;
+  padding: 0 2px;
+  vertical-align: middle;
+}
+.msg:hover .react-btn { opacity: 1; }

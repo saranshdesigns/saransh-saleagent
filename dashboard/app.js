@@ -121,6 +121,7 @@ function showApp() {
   appEl.style.display = "flex";
   appEl.classList.add("visible");
 
+  applyTheme();
   loadAnalytics();
   loadConversations();
   connectWebSocket();
@@ -188,6 +189,7 @@ function renderConvList(convs) {
         <div class="conv-item-top">
           <span class="conv-phone">${formatPhone(conv.phone)}</span>
           <span class="conv-time">${timeStr}</span>
+          <button class="conv-menu-btn" onclick="showConvMenu('${escAttr(conv.phone)}',event)" title="More options">⋮</button>
         </div>
         <div class="conv-item-mid">
           <span class="badge ${svcCls}">${conv.service || "unknown"}</span>
@@ -265,10 +267,15 @@ function renderMessages(messages) {
       ? `<button class="correct-btn" onclick="showCorrectionPanel(${index})" title="Send correction to client">&#9888; Correct</button>`
       : "";
 
+    const wamidAttr = msg.wamid ? ` data-wamid="${escAttr(msg.wamid)}"` : "";
+    const reactBtn = msg.wamid
+      ? `<button class="react-btn" onclick="showReactPicker('${escAttr(msg.wamid)}',this)" title="React">😊</button>`
+      : "";
+
     return `
-      <div class="msg ${escAttr(msg.role)}" data-index="${index}">
+      <div class="msg ${escAttr(msg.role)}" data-index="${index}"${wamidAttr}>
         <div style="max-width:100%">
-          <div class="msg-role-label">${roleLabel} ${correctionBtn}</div>
+          <div class="msg-role-label">${roleLabel} ${correctionBtn} ${reactBtn}</div>
           <div class="bubble">${escHtml(msg.content || "")}</div>
           <div class="msg-meta">${timeStr}</div>
           <div class="correction-panel hidden" id="cp-${index}">
@@ -502,14 +509,14 @@ function setWsStatus(connected) {
 // ============================================================
 
 async function apiFetch(path, options = {}) {
-  const resp = await fetch(path, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${token}`,
-      ...(options.headers || {})
-    }
-  });
+  const isFormData = options.body instanceof FormData;
+  const headers = {
+    "Authorization": `Bearer ${token}`,
+    ...(options.headers || {})
+  };
+  if (!isFormData) headers["Content-Type"] = "application/json";
+
+  const resp = await fetch(path, { ...options, headers });
 
   if (resp.status === 401) {
     logout();
@@ -518,6 +525,11 @@ async function apiFetch(path, options = {}) {
 
   if (!resp.ok) {
     throw new Error(`HTTP ${resp.status}`);
+  }
+
+  // Export endpoint returns a file, not JSON
+  if (resp.headers.get("Content-Disposition")?.includes("attachment")) {
+    return resp.blob();
   }
 
   return resp.json();
@@ -939,4 +951,231 @@ function escHtml(str) {
 function escAttr(str) {
   if (!str) return "";
   return String(str).replace(/'/g, "\\'").replace(/"/g, "&quot;");
+}
+
+// ============================================================
+// THEME TOGGLE
+// ============================================================
+
+function toggleTheme() {
+  const isLight = document.body.classList.toggle("light-theme");
+  localStorage.setItem("theme", isLight ? "light" : "dark");
+  document.getElementById("themeToggle").textContent = isLight ? "☀️" : "🌙";
+}
+
+function applyTheme() {
+  const saved = localStorage.getItem("theme");
+  if (saved === "light") {
+    document.body.classList.add("light-theme");
+    const btn = document.getElementById("themeToggle");
+    if (btn) btn.textContent = "☀️";
+  }
+}
+
+// ============================================================
+// CONVERSATION CONTEXT MENU
+// ============================================================
+
+let convMenuPhone = null;
+
+function showConvMenu(phone, e) {
+  convMenuPhone = phone;
+  e.stopPropagation();
+  const m = document.getElementById("convMenu");
+  m.style.display = "block";
+  m.style.top = e.clientY + "px";
+  m.style.left = e.clientX + "px";
+}
+
+document.addEventListener("click", () => {
+  const m = document.getElementById("convMenu");
+  if (m) m.style.display = "none";
+});
+
+async function convMenuAction(action) {
+  const phone = convMenuPhone;
+  if (!phone) return;
+  document.getElementById("convMenu").style.display = "none";
+
+  if (action === "delete") {
+    if (!confirm(`Delete entire conversation with ${formatPhone(phone)}? This cannot be undone.`)) return;
+    try {
+      await apiFetch(`/api/conversations/${encodeURIComponent(phone)}`, { method: "DELETE" });
+      if (currentPhone === phone) {
+        currentPhone = null;
+        document.getElementById("chat-panel").style.display = "none";
+        document.getElementById("no-chat").classList.remove("hidden");
+      }
+      loadConversations();
+      loadAnalytics();
+      showToast("Conversation deleted forever", "success");
+    } catch (e) {
+      showToast("Failed to delete conversation", "error");
+    }
+  } else if (action === "export") {
+    try {
+      const resp = await fetch(`/api/conversations/${encodeURIComponent(phone)}/export`, {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (!resp.ok) throw new Error();
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `chat_${phone}.json`; a.click();
+      URL.revokeObjectURL(url);
+      showToast("Chat exported", "success");
+    } catch (e) {
+      showToast("Failed to export chat", "error");
+    }
+  } else if (action === "block") {
+    if (!confirm(`Block ${formatPhone(phone)}? They won't be able to message the agent.`)) return;
+    try {
+      await apiFetch(`/api/conversations/${encodeURIComponent(phone)}/block`, {
+        method: "POST",
+        body: JSON.stringify({ block: true })
+      });
+      showToast(`${formatPhone(phone)} blocked`, "success");
+    } catch (e) {
+      showToast("Failed to block number", "error");
+    }
+  } else if (action === "mark-read") {
+    try {
+      await apiFetch(`/api/conversations/${encodeURIComponent(phone)}/mark-read`, { method: "POST" });
+      showToast("Marked as read on WhatsApp", "success");
+    } catch (e) {
+      showToast("No message ID found to mark as read", "error");
+    }
+  }
+}
+
+// ============================================================
+// CHAT HEADER ACTIONS
+// ============================================================
+
+async function markCurrentAsRead() {
+  if (!currentPhone) return;
+  try {
+    await apiFetch(`/api/conversations/${encodeURIComponent(currentPhone)}/mark-read`, { method: "POST" });
+    showToast("Marked as read on WhatsApp", "success");
+  } catch (e) {
+    showToast("No message ID found to mark as read", "error");
+  }
+}
+
+// Send Media
+function openSendMedia() {
+  document.getElementById("mediaModal").style.display = "flex";
+}
+function closeSendMedia() {
+  document.getElementById("mediaModal").style.display = "none";
+}
+async function doSendMedia() {
+  if (!currentPhone) return;
+  const f = document.getElementById("mediaFile").files[0];
+  if (!f) { showToast("Please select a file", "error"); return; }
+  const caption = document.getElementById("mediaCaption").value;
+  const type = document.getElementById("mediaType").value;
+  const fd = new FormData();
+  fd.append("file", f);
+  fd.append("caption", caption);
+  fd.append("media_type", type);
+  try {
+    await apiFetch(`/api/conversations/${encodeURIComponent(currentPhone)}/send-media`, {
+      method: "POST",
+      body: fd
+    });
+    closeSendMedia();
+    showToast("Media sent!", "success");
+  } catch (e) {
+    showToast("Failed to send media", "error");
+  }
+}
+
+// Send Location
+function openSendLocation() {
+  document.getElementById("locationModal").style.display = "flex";
+}
+function closeSendLocation() {
+  document.getElementById("locationModal").style.display = "none";
+}
+async function doSendLocation() {
+  if (!currentPhone) return;
+  const lat = parseFloat(document.getElementById("locLat").value);
+  const lon = parseFloat(document.getElementById("locLon").value);
+  if (isNaN(lat) || isNaN(lon)) { showToast("Enter valid coordinates", "error"); return; }
+  const name = document.getElementById("locName").value;
+  const address = document.getElementById("locAddr").value;
+  try {
+    await apiFetch(`/api/conversations/${encodeURIComponent(currentPhone)}/send-location`, {
+      method: "POST",
+      body: JSON.stringify({ latitude: lat, longitude: lon, name, address })
+    });
+    closeSendLocation();
+    showToast("Location sent!", "success");
+  } catch (e) {
+    showToast("Failed to send location", "error");
+  }
+}
+
+// Send Interactive Buttons
+function openSendButtons() {
+  document.getElementById("buttonsModal").style.display = "flex";
+}
+function closeSendButtons() {
+  document.getElementById("buttonsModal").style.display = "none";
+}
+async function doSendButtons() {
+  if (!currentPhone) return;
+  const bodyText = document.getElementById("btnBody").value.trim();
+  if (!bodyText) { showToast("Message body is required", "error"); return; }
+  const buttons = [1, 2, 3]
+    .map(i => document.getElementById(`btn${i}`).value.trim())
+    .filter(Boolean)
+    .map((title, i) => ({ id: `btn${i}`, title }));
+  if (!buttons.length) { showToast("At least one button title required", "error"); return; }
+  try {
+    await apiFetch(`/api/conversations/${encodeURIComponent(currentPhone)}/send-interactive`, {
+      method: "POST",
+      body: JSON.stringify({ body_text: bodyText, buttons })
+    });
+    closeSendButtons();
+    showToast("Interactive buttons sent!", "success");
+  } catch (e) {
+    showToast("Failed to send buttons", "error");
+  }
+}
+
+// ============================================================
+// EMOJI REACTIONS
+// ============================================================
+
+let reactTargetWamid = null;
+
+function showReactPicker(wamid, el) {
+  reactTargetWamid = wamid;
+  const p = document.getElementById("emojiPicker");
+  const r = el.getBoundingClientRect();
+  p.style.top = (r.top + window.scrollY - 44) + "px";
+  p.style.left = r.left + "px";
+  p.style.display = "flex";
+}
+
+document.addEventListener("click", (e) => {
+  const picker = document.getElementById("emojiPicker");
+  if (picker && !picker.contains(e.target)) picker.style.display = "none";
+});
+
+async function quickReact(emoji) {
+  document.getElementById("emojiPicker").style.display = "none";
+  if (!reactTargetWamid || !currentPhone) return;
+  try {
+    await apiFetch(`/api/conversations/${encodeURIComponent(currentPhone)}/react`, {
+      method: "POST",
+      body: JSON.stringify({ wamid: reactTargetWamid, emoji })
+    });
+    showToast(`Reaction ${emoji} sent`, "success");
+  } catch (e) {
+    showToast("Failed to send reaction", "error");
+  }
+  reactTargetWamid = null;
 }

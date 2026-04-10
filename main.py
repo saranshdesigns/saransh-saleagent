@@ -9,6 +9,7 @@ import asyncio
 import datetime
 import hmac
 import hashlib
+import tempfile
 from collections import deque
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -16,8 +17,8 @@ from pathlib import Path
 _IST = ZoneInfo("Asia/Kolkata")
 def _now_ist_iso() -> str:
     return datetime.datetime.now(_IST).isoformat()
-from fastapi import FastAPI, Request, Response, HTTPException, Depends
-from fastapi.responses import PlainTextResponse, JSONResponse
+from fastapi import FastAPI, Request, Response, HTTPException, Depends, UploadFile, File, Form
+from fastapi.responses import PlainTextResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.websockets import WebSocket, WebSocketDisconnect
 from dotenv import load_dotenv
@@ -32,7 +33,9 @@ from agent.conversation import load_conversation, get_summary, mark_handoff, add
 from agent.whatsapp import (
     send_text, send_image, send_portfolio_samples,
     send_owner_alert, send_escalation_alert,
-    download_media, encode_image_to_base64
+    download_media, encode_image_to_base64,
+    mark_message_read, send_reaction, send_document,
+    send_video, send_audio, send_location, send_interactive_buttons
 )
 from agent.portfolio import get_samples
 from agent.dashboard_auth import verify_password, create_access_token, require_auth
@@ -196,6 +199,15 @@ async def receive_message(request: Request):
             if not phone:
                 continue
 
+            # Blocked phone check
+            try:
+                _settings = _load_settings_file()
+                if phone in _settings.get("blocked_phones", []):
+                    print(f"🚫 Blocked phone {phone} — ignoring message")
+                    continue
+            except Exception:
+                pass
+
             # Owner commands
             if phone == OWNER_PHONE:
                 print(f"👑 Owner message detected")
@@ -326,6 +338,7 @@ async def handle_client_message(phone: str, message: dict, msg_type: str):
     try:
         image_data = None
         text = ""
+        incoming_wamid = message.get("id")
         print(f"⚙️ Handling message from {phone}...")
 
         # --- CONTEXT REVIVAL & CLOSED STAGE CHECK ---
@@ -414,7 +427,7 @@ async def handle_client_message(phone: str, message: dict, msg_type: str):
             await send_text(phone, msg1)
             await asyncio.sleep(4)
             await send_text(phone, msg2)
-            add_message(phone, "user", text)
+            add_message(phone, "user", text, wamid=incoming_wamid)
             add_message(phone, "assistant", msg1 + " " + msg2)
             return
 
@@ -424,19 +437,19 @@ async def handle_client_message(phone: str, message: dict, msg_type: str):
         if any(kw in lower for kw in call_keywords):
             reply = "Sure, I will arrange a call for you. Please wait, I'll coordinate with Saransh Sir and you will receive a call shortly."
             await send_text(phone, reply)
-            add_message(phone, "user", text)
+            add_message(phone, "user", text, wamid=incoming_wamid)
             add_message(phone, "assistant", reply)
             await send_owner_alert(get_summary(phone))
             return
 
         # Portfolio/sample request
         if any(word in lower for word in ["sample", "portfolio", "work", "previous work", "examples", "show me"]):
-            await handle_portfolio_request(phone, text)
+            await handle_portfolio_request(phone, text, wamid=incoming_wamid)
             return
 
         # Standard AI processing
         print(f"🤖 Sending to OpenAI for processing...")
-        reply = process_message(phone, text, image_data)
+        reply = process_message(phone, text, image_data, wamid=incoming_wamid)
         print(f"✅ AI reply generated: {reply[:100]}...")
         print(f"📤 Sending reply to {phone}...")
         result = await send_text(phone, reply)
@@ -513,7 +526,7 @@ def _extract_service_from_text(text: str) -> str:
     return None
 
 
-async def handle_portfolio_request(phone: str, text: str):
+async def handle_portfolio_request(phone: str, text: str, wamid: str = None):
     """
     Handle sample/portfolio requests.
     Detects service from CURRENT MESSAGE first (handles cross-service requests like
@@ -546,7 +559,7 @@ async def handle_portfolio_request(phone: str, text: str):
 
     result = get_samples(service, category, packaging_type)
 
-    add_message(phone, "user", text)
+    add_message(phone, "user", text, wamid=wamid)
 
     if result["files"]:
         await send_text(phone, result["message"])
@@ -936,6 +949,128 @@ async def delete_kb_entry(entry_id: int, request: Request, _auth=Depends(require
     settings["knowledge_base"] = [e for e in kb if e["id"] != entry_id]
     _save_settings_file(settings)
     return {"status": "deleted"}
+
+
+# ============================================================
+# WHATSAPP ACTIONS API
+# ============================================================
+
+@app.post("/api/conversations/{phone}/mark-read")
+@limiter.limit("30/minute")
+async def api_mark_read(phone: str, request: Request, _auth=Depends(require_auth)):
+    """Mark the last incoming client message as read on WhatsApp."""
+    conv = load_conversation(phone)
+    messages = conv.get("messages", [])
+    # Find last user message with a wamid
+    last_wamid = next(
+        (m["wamid"] for m in reversed(messages) if m.get("role") == "user" and m.get("wamid")),
+        None
+    )
+    if not last_wamid:
+        raise HTTPException(400, detail="No wamid found for last client message")
+    result = await mark_message_read(last_wamid)
+    return {"status": "ok", "result": result}
+
+
+@app.post("/api/conversations/{phone}/react")
+@limiter.limit("30/minute")
+async def api_react(phone: str, request: Request, _auth=Depends(require_auth)):
+    """Send an emoji reaction to a specific WhatsApp message."""
+    body = await request.json()
+    wamid = body.get("wamid", "").strip()
+    emoji = body.get("emoji", "").strip()
+    if not wamid or not emoji:
+        raise HTTPException(400, detail="wamid and emoji required")
+    result = await send_reaction(phone, wamid, emoji)
+    return {"status": "ok", "result": result}
+
+
+@app.post("/api/conversations/{phone}/block")
+@limiter.limit("30/minute")
+async def api_block_phone(phone: str, request: Request, _auth=Depends(require_auth)):
+    """Block or unblock a phone number from messaging the agent."""
+    body = await request.json()
+    block = body.get("block", True)
+    settings = _load_settings_file()
+    blocked = settings.get("blocked_phones", [])
+    if block:
+        if phone not in blocked:
+            blocked.append(phone)
+    else:
+        blocked = [p for p in blocked if p != phone]
+    settings["blocked_phones"] = blocked
+    _save_settings_file(settings)
+    return {"status": "blocked" if block else "unblocked", "phone": phone}
+
+
+@app.get("/api/conversations/{phone}/export")
+@limiter.limit("10/minute")
+async def api_export_conversation(phone: str, request: Request, _auth=Depends(require_auth)):
+    """Export conversation as a JSON file download."""
+    conv_path = Path("data/conversations") / f"{phone}.json"
+    if not conv_path.exists():
+        raise HTTPException(404, detail="Conversation not found")
+    return FileResponse(
+        path=str(conv_path),
+        media_type="application/json",
+        filename=f"chat_{phone}.json",
+        headers={"Content-Disposition": f"attachment; filename=chat_{phone}.json"}
+    )
+
+
+@app.post("/api/conversations/{phone}/send-media")
+@limiter.limit("10/minute")
+async def api_send_media(
+    phone: str,
+    request: Request,
+    file: UploadFile = File(...),
+    caption: str = Form(""),
+    media_type: str = Form("image"),
+    _auth=Depends(require_auth)
+):
+    """Send a media file (image/video/document/audio) to a WhatsApp number."""
+    suffix = Path(file.filename).suffix or ".bin"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(await file.read())
+        tmp_path = tmp.name
+    try:
+        if media_type == "image":
+            result = await send_image(phone, tmp_path, caption)
+        elif media_type == "video":
+            result = await send_video(phone, tmp_path, caption)
+        elif media_type == "audio":
+            result = await send_audio(phone, tmp_path)
+        else:
+            result = await send_document(phone, tmp_path, file.filename, caption)
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+    return {"status": "sent", "result": result}
+
+
+@app.post("/api/conversations/{phone}/send-location")
+@limiter.limit("30/minute")
+async def api_send_location(phone: str, request: Request, _auth=Depends(require_auth)):
+    """Send a location pin to a WhatsApp number."""
+    body = await request.json()
+    lat = body.get("latitude")
+    lon = body.get("longitude")
+    if lat is None or lon is None:
+        raise HTTPException(400, detail="latitude and longitude required")
+    result = await send_location(phone, float(lat), float(lon), body.get("name", ""), body.get("address", ""))
+    return {"status": "sent", "result": result}
+
+
+@app.post("/api/conversations/{phone}/send-interactive")
+@limiter.limit("30/minute")
+async def api_send_interactive(phone: str, request: Request, _auth=Depends(require_auth)):
+    """Send an interactive button message (max 3 buttons) to a WhatsApp number."""
+    body = await request.json()
+    body_text = body.get("body_text", "").strip()
+    buttons = body.get("buttons", [])
+    if not body_text or not buttons:
+        raise HTTPException(400, detail="body_text and buttons required")
+    result = await send_interactive_buttons(phone, body_text, buttons[:3])
+    return {"status": "sent", "result": result}
 
 
 # ============================================================

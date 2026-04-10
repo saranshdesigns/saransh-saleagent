@@ -83,7 +83,7 @@ def _new_conversation(phone: str) -> dict:
     }
 
 
-def add_message(phone: str, role: str, content: str, image_url: Optional[str] = None):
+def add_message(phone: str, role: str, content: str, image_url: Optional[str] = None, wamid: Optional[str] = None):
     """Add a message to conversation history. role: 'user' or 'assistant'"""
     conv = load_conversation(phone)
     msg = {
@@ -93,6 +93,8 @@ def add_message(phone: str, role: str, content: str, image_url: Optional[str] = 
     }
     if image_url:
         msg["image_url"] = image_url
+    if wamid:
+        msg["wamid"] = wamid
     conv["messages"].append(msg)
     # Keep last 30 messages to manage token usage
     if len(conv["messages"]) > 30:

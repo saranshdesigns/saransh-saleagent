@@ -36,6 +36,7 @@
       </div>
       <span class="time" id="current-time"></span>
       <button class="logout-btn" onclick="logout()">Logout</button>
+      <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Toggle theme">🌙</button>
     </div>
   </div>
 
@@ -108,6 +109,12 @@
               <p id="chat-subtitle">—</p>
             </div>
             <div class="chat-header-badges" id="chat-badges"></div>
+            <div class="chat-actions" id="chatActions">
+              <button class="chat-action-btn" onclick="markCurrentAsRead()" title="Mark as Read">✓ Read</button>
+              <button class="chat-action-btn" onclick="openSendMedia()" title="Send Media">📎 Media</button>
+              <button class="chat-action-btn" onclick="openSendLocation()" title="Send Location">📍 Location</button>
+              <button class="chat-action-btn" onclick="openSendButtons()" title="Interactive Buttons">🔘 Buttons</button>
+            </div>
           </div>
 
           <!-- Messages -->
@@ -353,6 +360,73 @@
     </div>
   </div>
 
+</div>
+
+<!-- Conversation context menu -->
+<div class="conv-menu" id="convMenu" style="display:none">
+  <div class="conv-menu-item" onclick="convMenuAction('mark-read')">✓ Mark as Read</div>
+  <div class="conv-menu-item" onclick="convMenuAction('export')">↓ Export Chat</div>
+  <div class="conv-menu-item" onclick="convMenuAction('block')">🚫 Block Number</div>
+  <div class="conv-menu-item danger" onclick="convMenuAction('delete')">🗑 Delete Forever</div>
+</div>
+
+<!-- Send Media Modal -->
+<div class="modal-overlay" id="mediaModal" style="display:none" onclick="closeSendMedia()">
+  <div class="modal-card" onclick="event.stopPropagation()">
+    <div class="modal-title">Send Media</div>
+    <select class="modal-input" id="mediaType">
+      <option value="image">Image</option>
+      <option value="video">Video</option>
+      <option value="document">Document</option>
+      <option value="audio">Audio</option>
+    </select>
+    <input type="file" class="modal-input" id="mediaFile" />
+    <input type="text" class="modal-input" id="mediaCaption" placeholder="Caption (optional)" />
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeSendMedia()">Cancel</button>
+      <button class="btn-save" onclick="doSendMedia()">Send</button>
+    </div>
+  </div>
+</div>
+
+<!-- Send Location Modal -->
+<div class="modal-overlay" id="locationModal" style="display:none" onclick="closeSendLocation()">
+  <div class="modal-card" onclick="event.stopPropagation()">
+    <div class="modal-title">Send Location</div>
+    <input type="number" step="any" class="modal-input" id="locLat" placeholder="Latitude (e.g. 19.0760)" />
+    <input type="number" step="any" class="modal-input" id="locLon" placeholder="Longitude (e.g. 72.8777)" />
+    <input type="text" class="modal-input" id="locName" placeholder="Place name (optional)" />
+    <input type="text" class="modal-input" id="locAddr" placeholder="Address (optional)" />
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeSendLocation()">Cancel</button>
+      <button class="btn-save" onclick="doSendLocation()">Send</button>
+    </div>
+  </div>
+</div>
+
+<!-- Send Interactive Buttons Modal -->
+<div class="modal-overlay" id="buttonsModal" style="display:none" onclick="closeSendButtons()">
+  <div class="modal-card" onclick="event.stopPropagation()">
+    <div class="modal-title">Send Interactive Buttons</div>
+    <textarea class="modal-input" id="btnBody" rows="3" placeholder="Message body text..."></textarea>
+    <input type="text" class="modal-input" id="btn1" placeholder="Button 1 title (required)" />
+    <input type="text" class="modal-input" id="btn2" placeholder="Button 2 title (optional)" />
+    <input type="text" class="modal-input" id="btn3" placeholder="Button 3 title (optional)" />
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeSendButtons()">Cancel</button>
+      <button class="btn-save" onclick="doSendButtons()">Send</button>
+    </div>
+  </div>
+</div>
+
+<!-- Emoji Reaction Picker -->
+<div class="emoji-picker" id="emojiPicker" style="display:none">
+  <span onclick="quickReact('👍')">👍</span>
+  <span onclick="quickReact('❤️')">❤️</span>
+  <span onclick="quickReact('😂')">😂</span>
+  <span onclick="quickReact('😮')">😮</span>
+  <span onclick="quickReact('😢')">😢</span>
+  <span onclick="quickReact('🙏')">🙏</span>
 </div>
 
 <script src="/dashboard/app.js"></script>

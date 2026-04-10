@@ -233,3 +233,133 @@ async def download_media(media_id: str) -> bytes:
 def encode_image_to_base64(image_bytes: bytes) -> str:
     """Convert image bytes to base64 string for OpenAI vision."""
     return base64.b64encode(image_bytes).decode("utf-8")
+
+
+async def mark_message_read(wamid: str):
+    """Mark a WhatsApp message as read."""
+    payload = {
+        "messaging_product": "whatsapp",
+        "status": "read",
+        "message_id": wamid
+    }
+    async with httpx.AsyncClient() as client:
+        response = await client.post(API_URL, json=payload, headers=HEADERS)
+        return response.json()
+
+
+async def send_reaction(to: str, wamid: str, emoji: str):
+    """Send an emoji reaction to a specific WhatsApp message."""
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to,
+        "type": "reaction",
+        "reaction": {
+            "message_id": wamid,
+            "emoji": emoji
+        }
+    }
+    async with httpx.AsyncClient() as client:
+        response = await client.post(API_URL, json=payload, headers=HEADERS)
+        return response.json()
+
+
+async def _upload_media(file_path: str, mime_type: str) -> str:
+    """Upload a media file to Meta and return its media_id."""
+    upload_url = f"https://graph.facebook.com/v22.0/{PHONE_NUMBER_ID}/media"
+    upload_headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
+    p = Path(file_path)
+    with open(p, "rb") as f:
+        files = {"file": (p.name, f, mime_type)}
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                upload_url,
+                headers=upload_headers,
+                files=files,
+                data={"messaging_product": "whatsapp"}
+            )
+            data = resp.json()
+    if "id" not in data:
+        raise ValueError(f"Media upload failed: {data}")
+    return data["id"]
+
+
+async def send_document(to: str, file_path: str, filename: str, caption: str = ""):
+    """Send a document file to a WhatsApp number."""
+    media_id = await _upload_media(file_path, "application/octet-stream")
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "document",
+        "document": {"id": media_id, "filename": filename, "caption": caption}
+    }
+    async with httpx.AsyncClient() as client:
+        response = await client.post(API_URL, json=payload, headers=HEADERS)
+        return response.json()
+
+
+async def send_video(to: str, video_path: str, caption: str = ""):
+    """Send a video file to a WhatsApp number."""
+    media_id = await _upload_media(video_path, "video/mp4")
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "video",
+        "video": {"id": media_id, "caption": caption}
+    }
+    async with httpx.AsyncClient() as client:
+        response = await client.post(API_URL, json=payload, headers=HEADERS)
+        return response.json()
+
+
+async def send_audio(to: str, audio_path: str):
+    """Send an audio file to a WhatsApp number."""
+    media_id = await _upload_media(audio_path, "audio/mpeg")
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "audio",
+        "audio": {"id": media_id}
+    }
+    async with httpx.AsyncClient() as client:
+        response = await client.post(API_URL, json=payload, headers=HEADERS)
+        return response.json()
+
+
+async def send_location(to: str, lat: float, lon: float, name: str = "", address: str = ""):
+    """Send a location pin to a WhatsApp number."""
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "location",
+        "location": {
+            "latitude": lat,
+            "longitude": lon,
+            "name": name,
+            "address": address
+        }
+    }
+    async with httpx.AsyncClient() as client:
+        response = await client.post(API_URL, json=payload, headers=HEADERS)
+        return response.json()
+
+
+async def send_interactive_buttons(to: str, body_text: str, buttons: list):
+    """Send an interactive button message (max 3 buttons) to a WhatsApp number."""
+    btn_list = [
+        {"type": "reply", "reply": {"id": b["id"], "title": b["title"][:20]}}
+        for b in buttons[:3]
+    ]
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {"text": body_text},
+            "action": {"buttons": btn_list}
+        }
+    }
+    async with httpx.AsyncClient() as client:
+        response = await client.post(API_URL, json=payload, headers=HEADERS)
+        return response.json()
