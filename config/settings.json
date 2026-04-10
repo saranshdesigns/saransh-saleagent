@@ -15,5 +15,12 @@
   "handoff_message": "Great. I'll now connect you with the Owner directly. The Owner will message you shortly to proceed with the advance and project initiation.",
   "call_request_message": "Sure, I will arrange a call for you. Please wait, I'll coordinate with the Owner and you will receive a call shortly.",
   "learned_behaviors": {},
-  "blocked_categories": []
+  "blocked_categories": [],
+  "custom_instructions": {
+    "logo": "",
+    "packaging": "",
+    "website": "",
+    "general": ""
+  },
+  "knowledge_base": []
 }

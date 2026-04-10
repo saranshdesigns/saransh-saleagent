@@ -53,65 +53,293 @@
     <div class="stage-mini" id="stage-breakdown"></div>
   </div>
 
-  <!-- Main body -->
-  <div class="main-body">
+  <!-- Tab Navigation Bar -->
+  <div class="tab-bar">
+    <button class="tab-btn active" data-tab="conversations">Conversations</button>
+    <button class="tab-btn" data-tab="services">Services &amp; Pricing</button>
+    <button class="tab-btn" data-tab="knowledge-base">Knowledge Base</button>
+    <button class="tab-btn" data-tab="custom-instructions">Custom Instructions</button>
+  </div>
 
-    <!-- Sidebar -->
-    <div class="sidebar">
-      <div class="sidebar-header">
-        <span>Conversations</span>
-        <span id="conv-count" style="color:#bbb;font-weight:400;font-size:12px;"></span>
+  <!-- Tab: Conversations (default) -->
+  <div class="tab-content active" id="tab-conversations">
+    <div class="main-body">
+
+      <!-- Sidebar -->
+      <div class="sidebar">
+        <div class="sidebar-header">
+          <span>Conversations</span>
+          <span id="conv-count" style="color:#bbb;font-weight:400;font-size:12px;"></span>
+        </div>
+        <div class="conv-list" id="conv-list">
+          <div class="empty-state">Loading...</div>
+        </div>
       </div>
-      <div class="conv-list" id="conv-list">
-        <div class="empty-state">Loading...</div>
+
+      <!-- Chat area -->
+      <div class="chat-area">
+
+        <!-- No conversation selected -->
+        <div class="no-chat-selected" id="no-chat">
+          <div class="icon">💬</div>
+          <p>Select a conversation to view</p>
+        </div>
+
+        <!-- Active chat panel -->
+        <div id="chat-panel" class="hidden" style="display:flex;flex-direction:column;flex:1;overflow:hidden;">
+
+          <!-- Chat header -->
+          <div class="chat-header">
+            <div class="chat-header-info">
+              <h3 id="chat-phone">—</h3>
+              <p id="chat-subtitle">—</p>
+            </div>
+            <div class="chat-header-badges" id="chat-badges"></div>
+          </div>
+
+          <!-- Messages -->
+          <div class="messages-scroll" id="messages-scroll"></div>
+
+          <!-- Owner input -->
+          <div class="msg-input-bar">
+            <textarea
+              id="msg-input"
+              rows="1"
+              placeholder="Type a message as Owner... (Enter to send, Shift+Enter for new line)"
+              onkeydown="handleInputKey(event)"
+              oninput="autoResize(this)"
+            ></textarea>
+            <button class="send-btn" id="send-btn" onclick="sendOwnerMessage()" title="Send message">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="22" y1="2" x2="11" y2="13"></line>
+                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+              </svg>
+            </button>
+          </div>
+
+        </div>
+
       </div>
     </div>
+  </div>
 
-    <!-- Chat area -->
-    <div class="chat-area">
+  <!-- Tab: Services & Pricing -->
+  <div class="tab-content" id="tab-services">
+    <div class="services-container">
+      <h3 class="tab-panel-title">Services &amp; Pricing</h3>
+      <p class="tab-panel-desc">Edit pricing for each service. Changes are saved per card.</p>
 
-      <!-- No conversation selected -->
-      <div class="no-chat-selected" id="no-chat">
-        <div class="icon">💬</div>
-        <p>Select a conversation to view</p>
+      <!-- Logo Design Card -->
+      <div class="service-card" id="card-logo">
+        <div class="service-card-header" onclick="toggleServiceCard('logo')">
+          <span class="service-icon">🎨</span>
+          <span class="service-name">Logo Design</span>
+          <span class="service-arrow" id="arrow-logo">&#9654;</span>
+        </div>
+        <div class="service-card-body" id="body-logo">
+          <div class="subsection">
+            <h4>Logo Package</h4>
+            <div class="price-row">
+              <div class="price-field">
+                <label>Price (₹)</label>
+                <input type="number" class="price-input" id="logo-logo_package-price" value="2999" />
+              </div>
+              <div class="price-field">
+                <label>Min Price (₹)</label>
+                <input type="number" class="price-input" id="logo-logo_package-min_price" value="2500" />
+              </div>
+            </div>
+          </div>
+          <div class="subsection">
+            <h4>Branding Package</h4>
+            <div class="price-row">
+              <div class="price-field">
+                <label>Price (₹)</label>
+                <input type="number" class="price-input" id="logo-branding_package-price" value="4999" />
+              </div>
+              <div class="price-field">
+                <label>Min Price (₹)</label>
+                <input type="number" class="price-input" id="logo-branding_package-min_price" value="4500" />
+              </div>
+            </div>
+          </div>
+          <div class="subsection">
+            <div class="price-field">
+              <label>Advance Percent (%)</label>
+              <input type="number" class="price-input" id="logo-advance_percent" value="50" />
+            </div>
+          </div>
+          <button class="btn-save" onclick="savePricing()">Save Pricing</button>
+        </div>
       </div>
 
-      <!-- Active chat panel -->
-      <div id="chat-panel" class="hidden" style="display:flex;flex-direction:column;flex:1;overflow:hidden;">
-
-        <!-- Chat header -->
-        <div class="chat-header">
-          <div class="chat-header-info">
-            <h3 id="chat-phone">—</h3>
-            <p id="chat-subtitle">—</p>
+      <!-- Packaging Design Card -->
+      <div class="service-card" id="card-packaging">
+        <div class="service-card-header" onclick="toggleServiceCard('packaging')">
+          <span class="service-icon">📦</span>
+          <span class="service-name">Packaging Design</span>
+          <span class="service-arrow" id="arrow-packaging">&#9654;</span>
+        </div>
+        <div class="service-card-body" id="body-packaging">
+          <div class="subsection">
+            <h4>Pouch / Box</h4>
+            <div class="price-row">
+              <div class="price-field"><label>Master Price (₹)</label><input type="number" class="price-input" id="pkg-pouch_box-master-price" /></div>
+              <div class="price-field"><label>Master Min (₹)</label><input type="number" class="price-input" id="pkg-pouch_box-master-min_price" /></div>
+            </div>
+            <div class="price-row">
+              <div class="price-field"><label>Variant Price (₹)</label><input type="number" class="price-input" id="pkg-pouch_box-variant-price" /></div>
+              <div class="price-field"><label>Variant Min (₹)</label><input type="number" class="price-input" id="pkg-pouch_box-variant-min_price" /></div>
+            </div>
+            <div class="price-row">
+              <div class="price-field"><label>Size Change Price (₹)</label><input type="number" class="price-input" id="pkg-pouch_box-size_change-price" /></div>
+              <div class="price-field"><label>Size Change Min (₹)</label><input type="number" class="price-input" id="pkg-pouch_box-size_change-min_price" /></div>
+            </div>
           </div>
-          <div class="chat-header-badges" id="chat-badges"></div>
+          <div class="subsection">
+            <h4>Label</h4>
+            <div class="price-row">
+              <div class="price-field"><label>Master Price (₹)</label><input type="number" class="price-input" id="pkg-label-master-price" /></div>
+              <div class="price-field"><label>Master Min (₹)</label><input type="number" class="price-input" id="pkg-label-master-min_price" /></div>
+            </div>
+            <div class="price-row">
+              <div class="price-field"><label>Variant Price (₹)</label><input type="number" class="price-input" id="pkg-label-variant-price" /></div>
+              <div class="price-field"><label>Variant Min (₹)</label><input type="number" class="price-input" id="pkg-label-variant-min_price" /></div>
+            </div>
+            <div class="price-row">
+              <div class="price-field"><label>Size Change Price (₹)</label><input type="number" class="price-input" id="pkg-label-size_change-price" /></div>
+              <div class="price-field"><label>Size Change Min (₹)</label><input type="number" class="price-input" id="pkg-label-size_change-min_price" /></div>
+            </div>
+          </div>
+          <div class="subsection">
+            <div class="price-field">
+              <label>Advance Percent (%)</label>
+              <input type="number" class="price-input" id="pkg-advance_percent" />
+            </div>
+          </div>
+          <button class="btn-save" onclick="savePricing()">Save Pricing</button>
         </div>
+      </div>
 
-        <!-- Messages -->
-        <div class="messages-scroll" id="messages-scroll"></div>
-
-        <!-- Owner input -->
-        <div class="msg-input-bar">
-          <textarea
-            id="msg-input"
-            rows="1"
-            placeholder="Type a message as Owner... (Enter to send, Shift+Enter for new line)"
-            onkeydown="handleInputKey(event)"
-            oninput="autoResize(this)"
-          ></textarea>
-          <button class="send-btn" id="send-btn" onclick="sendOwnerMessage()" title="Send message">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="22" y1="2" x2="11" y2="13"></line>
-              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-            </svg>
-          </button>
+      <!-- Website Design Card -->
+      <div class="service-card" id="card-website">
+        <div class="service-card-header" onclick="toggleServiceCard('website')">
+          <span class="service-icon">🌐</span>
+          <span class="service-name">Website Design</span>
+          <span class="service-arrow" id="arrow-website">&#9654;</span>
         </div>
-
+        <div class="service-card-body" id="body-website">
+          <div class="subsection" id="ws-starter">
+            <h4>Starter</h4>
+            <div class="price-row">
+              <div class="price-field"><label>Price Min (₹)</label><input type="number" class="price-input" id="web-starter-price_min" /></div>
+              <div class="price-field"><label>Price Max (₹)</label><input type="number" class="price-input" id="web-starter-price_max" /></div>
+            </div>
+            <div class="price-row">
+              <div class="price-field"><label>Negotiated Min (₹)</label><input type="number" class="price-input" id="web-starter-negotiated_min" /></div>
+              <div class="price-field"><label>Advance (₹)</label><input type="number" class="price-input" id="web-starter-advance" /></div>
+            </div>
+            <div class="price-row">
+              <div class="price-field"><label>Advance Min (₹)</label><input type="number" class="price-input" id="web-starter-advance_min" /></div>
+            </div>
+          </div>
+          <div class="subsection" id="ws-business">
+            <h4>Business</h4>
+            <div class="price-row">
+              <div class="price-field"><label>Price Min (₹)</label><input type="number" class="price-input" id="web-business-price_min" /></div>
+              <div class="price-field"><label>Price Max (₹)</label><input type="number" class="price-input" id="web-business-price_max" /></div>
+            </div>
+            <div class="price-row">
+              <div class="price-field"><label>Negotiated Min (₹)</label><input type="number" class="price-input" id="web-business-negotiated_min" /></div>
+              <div class="price-field"><label>Advance (₹)</label><input type="number" class="price-input" id="web-business-advance" /></div>
+            </div>
+            <div class="price-row">
+              <div class="price-field"><label>Advance Min (₹)</label><input type="number" class="price-input" id="web-business-advance_min" /></div>
+            </div>
+          </div>
+          <div class="subsection" id="ws-premium">
+            <h4>Premium</h4>
+            <div class="price-row">
+              <div class="price-field"><label>Price Min (₹)</label><input type="number" class="price-input" id="web-premium-price_min" /></div>
+              <div class="price-field"><label>Price Max (₹)</label><input type="number" class="price-input" id="web-premium-price_max" /></div>
+            </div>
+            <div class="price-row">
+              <div class="price-field"><label>Negotiated Min (₹)</label><input type="number" class="price-input" id="web-premium-negotiated_min" /></div>
+              <div class="price-field"><label>Advance (₹)</label><input type="number" class="price-input" id="web-premium-advance" /></div>
+            </div>
+            <div class="price-row">
+              <div class="price-field"><label>Advance Min (₹)</label><input type="number" class="price-input" id="web-premium-advance_min" /></div>
+            </div>
+          </div>
+          <div class="subsection" id="ws-ecommerce">
+            <h4>Ecommerce</h4>
+            <div class="price-row">
+              <div class="price-field"><label>Price Min (₹)</label><input type="number" class="price-input" id="web-ecommerce-price_min" /></div>
+              <div class="price-field"><label>Price Max (₹)</label><input type="number" class="price-input" id="web-ecommerce-price_max" /></div>
+            </div>
+            <div class="price-row">
+              <div class="price-field"><label>Negotiated Min (₹)</label><input type="number" class="price-input" id="web-ecommerce-negotiated_min" /></div>
+              <div class="price-field"><label>Advance (₹)</label><input type="number" class="price-input" id="web-ecommerce-advance" /></div>
+            </div>
+            <div class="price-row">
+              <div class="price-field"><label>Advance Min (₹)</label><input type="number" class="price-input" id="web-ecommerce-advance_min" /></div>
+            </div>
+          </div>
+          <button class="btn-save" onclick="savePricing()">Save Pricing</button>
+        </div>
       </div>
 
     </div>
   </div>
+
+  <!-- Tab: Knowledge Base -->
+  <div class="tab-content" id="tab-knowledge-base">
+    <div class="kb-container">
+      <h3 class="tab-panel-title">Knowledge Base</h3>
+      <p class="tab-panel-desc">Add FAQs and custom knowledge the agent can reference during conversations.</p>
+
+      <div class="kb-add-form">
+        <input type="text" id="kb-new-question" class="kb-input" placeholder="Question (e.g., What file formats do you deliver?)" />
+        <textarea id="kb-new-answer" class="kb-textarea" rows="3" placeholder="Answer (e.g., We deliver AI, EPS, PDF, PNG, and JPG files.)"></textarea>
+        <button class="btn-save" onclick="addKBEntry()">Add Entry</button>
+      </div>
+
+      <div class="kb-list" id="kb-list">
+        <div class="empty-state">Loading knowledge base...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tab: Custom Instructions -->
+  <div class="tab-content" id="tab-custom-instructions">
+    <div class="ci-container">
+      <h3 class="tab-panel-title">Custom Instructions</h3>
+      <p class="tab-panel-desc">Give the agent specific instructions for how to handle each service. These override default behavior.</p>
+
+      <div class="ci-section">
+        <label class="ci-label">🎨 Logo Design Instructions</label>
+        <textarea id="ci-logo" class="ci-textarea" rows="5" placeholder="E.g., Always mention that we provide 3 initial concepts. Emphasize that revisions are unlimited. If client asks for mascot logo, quote ₹1500 extra."></textarea>
+      </div>
+
+      <div class="ci-section">
+        <label class="ci-label">📦 Packaging Design Instructions</label>
+        <textarea id="ci-packaging" class="ci-textarea" rows="5" placeholder="E.g., For food products, always ask about FSSAI license number. Mention that we handle printing coordination. If more than 5 variants, offer 10% bulk discount."></textarea>
+      </div>
+
+      <div class="ci-section">
+        <label class="ci-label">🌐 Website Design Instructions</label>
+        <textarea id="ci-website" class="ci-textarea" rows="5" placeholder="E.g., Always recommend the Business package first. Mention free SSL and 1 year hosting. If client has existing domain, ask for registrar details."></textarea>
+      </div>
+
+      <div class="ci-section">
+        <label class="ci-label">📋 General Instructions (applies to all services)</label>
+        <textarea id="ci-general" class="ci-textarea" rows="5" placeholder="E.g., Always be friendly but professional. Use the client's name if they share it. If a client seems unsure, share the portfolio link. Never badmouth competitors."></textarea>
+      </div>
+
+      <button class="btn-save" onclick="saveCustomInstructions()">Save All Instructions</button>
+    </div>
+  </div>
+
 </div>
 
 <script src="/dashboard/app.js"></script>

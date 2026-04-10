@@ -39,6 +39,20 @@ from agent.dashboard_auth import verify_password, create_access_token, require_a
 
 load_dotenv()
 
+PRICING_PATH = Path("config/pricing.json")
+SETTINGS_PATH = Path("config/settings.json")
+
+
+def _load_settings_file() -> dict:
+    with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _save_settings_file(data: dict):
+    with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
 limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="SaranshDesigns AI Agent", version="1.0.0")
 app.state.limiter = limiter
@@ -822,6 +836,106 @@ async def owner_send_message(phone: str, request: Request, _auth=Depends(require
     })
 
     return {"status": "sent", "whatsapp_result": result}
+
+
+# ============================================================
+# PRICING API
+# ============================================================
+
+@app.get("/api/pricing")
+async def get_pricing(request: Request, _auth=Depends(require_auth)):
+    """Return current pricing.json contents."""
+    with open(PRICING_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+@app.put("/api/pricing")
+async def update_pricing(request: Request, _auth=Depends(require_auth)):
+    """Replace pricing.json with new data."""
+    body = await request.json()
+    for key in ["logo", "packaging", "website"]:
+        if key not in body:
+            raise HTTPException(400, detail=f"Missing required key: {key}")
+    with open(PRICING_PATH, "w", encoding="utf-8") as f:
+        json.dump(body, f, indent=2, ensure_ascii=False)
+    return {"status": "updated"}
+
+
+# ============================================================
+# CUSTOM INSTRUCTIONS API
+# ============================================================
+
+@app.get("/api/settings/custom-instructions")
+async def get_custom_instructions(request: Request, _auth=Depends(require_auth)):
+    settings = _load_settings_file()
+    return settings.get("custom_instructions", {"logo": "", "packaging": "", "website": "", "general": ""})
+
+
+@app.put("/api/settings/custom-instructions")
+async def update_custom_instructions(request: Request, _auth=Depends(require_auth)):
+    body = await request.json()
+    settings = _load_settings_file()
+    settings["custom_instructions"] = {
+        "logo": body.get("logo", ""),
+        "packaging": body.get("packaging", ""),
+        "website": body.get("website", ""),
+        "general": body.get("general", "")
+    }
+    _save_settings_file(settings)
+    return {"status": "updated"}
+
+
+# ============================================================
+# KNOWLEDGE BASE API
+# ============================================================
+
+@app.get("/api/settings/knowledge-base")
+async def get_knowledge_base(request: Request, _auth=Depends(require_auth)):
+    settings = _load_settings_file()
+    return settings.get("knowledge_base", [])
+
+
+@app.post("/api/settings/knowledge-base")
+async def add_kb_entry(request: Request, _auth=Depends(require_auth)):
+    body = await request.json()
+    question = body.get("question", "").strip()
+    answer = body.get("answer", "").strip()
+    if not question or not answer:
+        raise HTTPException(400, detail="Both question and answer required")
+    settings = _load_settings_file()
+    kb = settings.get("knowledge_base", [])
+    max_id = max((e.get("id", 0) for e in kb), default=0)
+    entry = {"id": max_id + 1, "question": question, "answer": answer}
+    kb.append(entry)
+    settings["knowledge_base"] = kb
+    _save_settings_file(settings)
+    return entry
+
+
+@app.put("/api/settings/knowledge-base/{entry_id}")
+async def update_kb_entry(entry_id: int, request: Request, _auth=Depends(require_auth)):
+    body = await request.json()
+    settings = _load_settings_file()
+    kb = settings.get("knowledge_base", [])
+    for entry in kb:
+        if entry["id"] == entry_id:
+            if "question" in body:
+                entry["question"] = body["question"]
+            if "answer" in body:
+                entry["answer"] = body["answer"]
+            settings["knowledge_base"] = kb
+            _save_settings_file(settings)
+            return entry
+    raise HTTPException(404, detail="Entry not found")
+
+
+@app.delete("/api/settings/knowledge-base/{entry_id}")
+async def delete_kb_entry(entry_id: int, request: Request, _auth=Depends(require_auth)):
+    settings = _load_settings_file()
+    kb = settings.get("knowledge_base", [])
+    settings["knowledge_base"] = [e for e in kb if e["id"] != entry_id]
+    _save_settings_file(settings)
+    return {"status": "deleted"}
 
 
 # ============================================================

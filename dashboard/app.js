@@ -7,6 +7,9 @@ let token = localStorage.getItem("dash_token") || null;
 let currentPhone = null;
 let ws = null;
 let conversations = [];
+let pricingData = null;
+let kbEntries = [];
+let tabsLoaded = { conversations: true, services: false, "knowledge-base": false, "custom-instructions": false };
 
 // ---- STAGE / SERVICE COLOR MAPS ----
 const STAGE_BADGE = {
@@ -41,6 +44,12 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("login-password").addEventListener("keydown", e => {
     if (e.key === "Enter") doLogin();
   });
+
+  // Tab navigation listeners
+  document.querySelectorAll(".tab-btn").forEach(btn => {
+    btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+  });
+
   updateClock();
   setInterval(updateClock, 30000);
 });
@@ -512,6 +521,379 @@ async function apiFetch(path, options = {}) {
   }
 
   return resp.json();
+}
+
+// ============================================================
+// TAB SYSTEM
+// ============================================================
+
+function switchTab(tabName) {
+  // Update tab buttons
+  document.querySelectorAll(".tab-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.tab === tabName);
+  });
+
+  // Update tab content panels
+  document.querySelectorAll(".tab-content").forEach(panel => {
+    panel.classList.toggle("active", panel.id === `tab-${tabName}`);
+  });
+
+  // Load data on first visit
+  if (!tabsLoaded[tabName]) {
+    tabsLoaded[tabName] = true;
+    if (tabName === "services") loadPricing();
+    if (tabName === "knowledge-base") loadKnowledgeBase();
+    if (tabName === "custom-instructions") loadCustomInstructions();
+  }
+}
+
+// ============================================================
+// SERVICES & PRICING
+// ============================================================
+
+function toggleServiceCard(service) {
+  const body = document.getElementById(`body-${service}`);
+  const arrow = document.getElementById(`arrow-${service}`);
+  if (!body) return;
+  const isOpen = body.classList.contains("open");
+  body.classList.toggle("open");
+  if (arrow) arrow.textContent = isOpen ? "\u25B6" : "\u25BC";
+}
+
+async function loadPricing() {
+  try {
+    pricingData = await apiFetch("/api/pricing");
+    populatePricingFields(pricingData);
+  } catch (e) {
+    console.warn("Failed to load pricing", e);
+    showToast("Failed to load pricing data", "error");
+  }
+}
+
+function populatePricingFields(data) {
+  if (!data) return;
+
+  // Logo
+  const logo = data.logo || {};
+  const lp = logo.logo_package || {};
+  const bp = logo.branding_package || {};
+  setVal("logo-logo_package-price", lp.price);
+  setVal("logo-logo_package-min_price", lp.min_price);
+  setVal("logo-branding_package-price", bp.price);
+  setVal("logo-branding_package-min_price", bp.min_price);
+  setVal("logo-advance_percent", logo.advance_percent);
+
+  // Packaging
+  const pkg = data.packaging || {};
+  const pb = pkg.pouch_box || {};
+  const lb = pkg.label || {};
+  for (const type of ["pouch_box", "label"]) {
+    const prefix = type === "pouch_box" ? "pkg-pouch_box" : "pkg-label";
+    const src = type === "pouch_box" ? pb : lb;
+    for (const tier of ["master", "variant", "size_change"]) {
+      const t = src[tier] || {};
+      setVal(`${prefix}-${tier}-price`, t.price);
+      setVal(`${prefix}-${tier}-min_price`, t.min_price);
+    }
+  }
+  setVal("pkg-advance_percent", pkg.advance_percent);
+
+  // Website
+  const web = data.website || {};
+  const packages = web.packages || {};
+  for (const pkg of ["starter", "business", "premium", "ecommerce"]) {
+    const p = packages[pkg] || {};
+    setVal(`web-${pkg}-price_min`, p.price_min);
+    setVal(`web-${pkg}-price_max`, p.price_max);
+    setVal(`web-${pkg}-negotiated_min`, p.negotiated_min);
+    setVal(`web-${pkg}-advance`, p.advance);
+    setVal(`web-${pkg}-advance_min`, p.advance_min);
+  }
+}
+
+function setVal(id, value) {
+  const el = document.getElementById(id);
+  if (el && value !== undefined && value !== null) el.value = value;
+}
+
+function getVal(id) {
+  const el = document.getElementById(id);
+  return el ? Number(el.value) || 0 : 0;
+}
+
+async function savePricing() {
+  // Build pricing object from all input fields
+  const updated = {
+    logo: {
+      logo_package: {
+        price: getVal("logo-logo_package-price"),
+        min_price: getVal("logo-logo_package-min_price")
+      },
+      branding_package: {
+        price: getVal("logo-branding_package-price"),
+        min_price: getVal("logo-branding_package-min_price")
+      },
+      advance_percent: getVal("logo-advance_percent")
+    },
+    packaging: {
+      pouch_box: {
+        master: { price: getVal("pkg-pouch_box-master-price"), min_price: getVal("pkg-pouch_box-master-min_price") },
+        variant: { price: getVal("pkg-pouch_box-variant-price"), min_price: getVal("pkg-pouch_box-variant-min_price") },
+        size_change: { price: getVal("pkg-pouch_box-size_change-price"), min_price: getVal("pkg-pouch_box-size_change-min_price") }
+      },
+      label: {
+        master: { price: getVal("pkg-label-master-price"), min_price: getVal("pkg-label-master-min_price") },
+        variant: { price: getVal("pkg-label-variant-price"), min_price: getVal("pkg-label-variant-min_price") },
+        size_change: { price: getVal("pkg-label-size_change-price"), min_price: getVal("pkg-label-size_change-min_price") }
+      },
+      advance_percent: getVal("pkg-advance_percent")
+    },
+    website: {
+      packages: {
+        starter: {
+          price_min: getVal("web-starter-price_min"), price_max: getVal("web-starter-price_max"),
+          negotiated_min: getVal("web-starter-negotiated_min"), advance: getVal("web-starter-advance"),
+          advance_min: getVal("web-starter-advance_min")
+        },
+        business: {
+          price_min: getVal("web-business-price_min"), price_max: getVal("web-business-price_max"),
+          negotiated_min: getVal("web-business-negotiated_min"), advance: getVal("web-business-advance"),
+          advance_min: getVal("web-business-advance_min")
+        },
+        premium: {
+          price_min: getVal("web-premium-price_min"), price_max: getVal("web-premium-price_max"),
+          negotiated_min: getVal("web-premium-negotiated_min"), advance: getVal("web-premium-advance"),
+          advance_min: getVal("web-premium-advance_min")
+        },
+        ecommerce: {
+          price_min: getVal("web-ecommerce-price_min"), price_max: getVal("web-ecommerce-price_max"),
+          negotiated_min: getVal("web-ecommerce-negotiated_min"), advance: getVal("web-ecommerce-advance"),
+          advance_min: getVal("web-ecommerce-advance_min")
+        }
+      }
+    }
+  };
+
+  // Preserve any extra keys from the original data
+  if (pricingData) {
+    for (const key of Object.keys(pricingData)) {
+      if (!updated[key]) updated[key] = pricingData[key];
+    }
+    // Preserve extra keys within each service too
+    if (pricingData.logo) {
+      for (const key of Object.keys(pricingData.logo)) {
+        if (!updated.logo[key]) updated.logo[key] = pricingData.logo[key];
+      }
+    }
+    if (pricingData.packaging) {
+      for (const key of Object.keys(pricingData.packaging)) {
+        if (!updated.packaging[key]) updated.packaging[key] = pricingData.packaging[key];
+      }
+    }
+    if (pricingData.website) {
+      for (const key of Object.keys(pricingData.website)) {
+        if (!updated.website[key]) updated.website[key] = pricingData.website[key];
+      }
+    }
+  }
+
+  try {
+    await apiFetch("/api/pricing", {
+      method: "PUT",
+      body: JSON.stringify(updated)
+    });
+    pricingData = updated;
+    showToast("Pricing saved successfully!", "success");
+  } catch (e) {
+    console.error("Failed to save pricing", e);
+    showToast("Failed to save pricing. Please try again.", "error");
+  }
+}
+
+// ============================================================
+// KNOWLEDGE BASE
+// ============================================================
+
+async function loadKnowledgeBase() {
+  try {
+    kbEntries = await apiFetch("/api/settings/knowledge-base");
+    renderKBList(kbEntries);
+  } catch (e) {
+    console.warn("Failed to load knowledge base", e);
+    document.getElementById("kb-list").innerHTML = `<div class="empty-state">Failed to load knowledge base</div>`;
+  }
+}
+
+function renderKBList(entries) {
+  const list = document.getElementById("kb-list");
+  if (!entries || !entries.length) {
+    list.innerHTML = `<div class="empty-state">No knowledge base entries yet. Add your first one above.</div>`;
+    return;
+  }
+
+  list.innerHTML = entries.map(entry => `
+    <div class="kb-entry" id="kb-entry-${escAttr(entry.id)}">
+      <div class="kb-entry-display" id="kb-display-${escAttr(entry.id)}">
+        <div class="kb-question"><strong>Q:</strong> ${escHtml(entry.question)}</div>
+        <div class="kb-answer"><strong>A:</strong> ${escHtml(entry.answer)}</div>
+        <div class="kb-entry-actions">
+          <button class="btn-edit" onclick="editKBEntry('${escAttr(entry.id)}')">Edit</button>
+          <button class="btn-danger" onclick="deleteKBEntry('${escAttr(entry.id)}')">Delete</button>
+        </div>
+      </div>
+      <div class="kb-entry-edit hidden" id="kb-edit-${escAttr(entry.id)}">
+        <input type="text" class="kb-input" id="kb-eq-${escAttr(entry.id)}" value="${escAttr(entry.question)}" />
+        <textarea class="kb-textarea" id="kb-ea-${escAttr(entry.id)}" rows="3">${escHtml(entry.answer).replace(/<br>/g, '\n')}</textarea>
+        <div class="kb-entry-actions">
+          <button class="btn-save" onclick="saveKBEntry('${escAttr(entry.id)}')">Save</button>
+          <button class="btn-cancel" onclick="cancelKBEdit('${escAttr(entry.id)}')">Cancel</button>
+        </div>
+      </div>
+    </div>
+  `).join("");
+}
+
+async function addKBEntry() {
+  const qEl = document.getElementById("kb-new-question");
+  const aEl = document.getElementById("kb-new-answer");
+  const question = qEl.value.trim();
+  const answer = aEl.value.trim();
+
+  if (!question || !answer) {
+    showToast("Please fill in both question and answer", "error");
+    return;
+  }
+
+  try {
+    const created = await apiFetch("/api/settings/knowledge-base", {
+      method: "POST",
+      body: JSON.stringify({ question, answer })
+    });
+    kbEntries.push(created);
+    renderKBList(kbEntries);
+    qEl.value = "";
+    aEl.value = "";
+    showToast("Knowledge base entry added!", "success");
+  } catch (e) {
+    console.error("Failed to add KB entry", e);
+    showToast("Failed to add entry. Please try again.", "error");
+  }
+}
+
+function editKBEntry(id) {
+  const display = document.getElementById(`kb-display-${id}`);
+  const edit = document.getElementById(`kb-edit-${id}`);
+  if (display) display.classList.add("hidden");
+  if (edit) edit.classList.remove("hidden");
+}
+
+async function saveKBEntry(id) {
+  const question = document.getElementById(`kb-eq-${id}`).value.trim();
+  const answer = document.getElementById(`kb-ea-${id}`).value.trim();
+
+  if (!question || !answer) {
+    showToast("Please fill in both question and answer", "error");
+    return;
+  }
+
+  try {
+    await apiFetch(`/api/settings/knowledge-base/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify({ question, answer })
+    });
+    // Update local data
+    const entry = kbEntries.find(e => e.id === id);
+    if (entry) { entry.question = question; entry.answer = answer; }
+    renderKBList(kbEntries);
+    showToast("Entry updated!", "success");
+  } catch (e) {
+    console.error("Failed to update KB entry", e);
+    showToast("Failed to update entry. Please try again.", "error");
+  }
+}
+
+function cancelKBEdit(id) {
+  const display = document.getElementById(`kb-display-${id}`);
+  const edit = document.getElementById(`kb-edit-${id}`);
+  if (display) display.classList.remove("hidden");
+  if (edit) edit.classList.add("hidden");
+}
+
+async function deleteKBEntry(id) {
+  if (!confirm("Are you sure you want to delete this knowledge base entry?")) return;
+
+  try {
+    await apiFetch(`/api/settings/knowledge-base/${encodeURIComponent(id)}`, {
+      method: "DELETE"
+    });
+    kbEntries = kbEntries.filter(e => e.id !== id);
+    renderKBList(kbEntries);
+    showToast("Entry deleted", "success");
+  } catch (e) {
+    console.error("Failed to delete KB entry", e);
+    showToast("Failed to delete entry. Please try again.", "error");
+  }
+}
+
+// ============================================================
+// CUSTOM INSTRUCTIONS
+// ============================================================
+
+async function loadCustomInstructions() {
+  try {
+    const data = await apiFetch("/api/settings/custom-instructions");
+    if (data.logo) document.getElementById("ci-logo").value = data.logo;
+    if (data.packaging) document.getElementById("ci-packaging").value = data.packaging;
+    if (data.website) document.getElementById("ci-website").value = data.website;
+    if (data.general) document.getElementById("ci-general").value = data.general;
+  } catch (e) {
+    console.warn("Failed to load custom instructions", e);
+    showToast("Failed to load custom instructions", "error");
+  }
+}
+
+async function saveCustomInstructions() {
+  const payload = {
+    logo: document.getElementById("ci-logo").value,
+    packaging: document.getElementById("ci-packaging").value,
+    website: document.getElementById("ci-website").value,
+    general: document.getElementById("ci-general").value
+  };
+
+  try {
+    await apiFetch("/api/settings/custom-instructions", {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    });
+    showToast("Custom instructions saved!", "success");
+  } catch (e) {
+    console.error("Failed to save custom instructions", e);
+    showToast("Failed to save instructions. Please try again.", "error");
+  }
+}
+
+// ============================================================
+// TOAST NOTIFICATIONS
+// ============================================================
+
+function showToast(message, type = "success") {
+  // Remove existing toast if any
+  const existing = document.querySelector(".toast");
+  if (existing) existing.remove();
+
+  const toast = document.createElement("div");
+  toast.className = `toast toast-${type}`;
+  toast.textContent = message;
+  document.body.appendChild(toast);
+
+  // Trigger animation
+  requestAnimationFrame(() => toast.classList.add("show"));
+
+  // Auto-hide after 3 seconds
+  setTimeout(() => {
+    toast.classList.remove("show");
+    setTimeout(() => toast.remove(), 300);
+  }, 3000);
 }
 
 // ============================================================
