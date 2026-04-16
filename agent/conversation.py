@@ -36,9 +36,10 @@ class ConversationStage:
 
 
 class ServiceType:
-    LOGO = "logo"
-    PACKAGING = "packaging"
-    WEBSITE = "website"
+    WEBSITE_WHATSAPP = "website_whatsapp"
+    LEAD_AUTOMATION = "lead_automation"
+    CUSTOM_DASHBOARD = "custom_dashboard"
+    CUSTOM_AUTOMATIONS = "custom_automations"
     UNKNOWN = "unknown"
 
 
@@ -50,7 +51,30 @@ def load_conversation(phone: str) -> dict:
     path = _get_path(phone)
     if path.exists():
         with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+            conv = json.load(f)
+        # Auto-reset if last message was more than 3 days ago
+        last = conv.get("last_updated")
+        if last and conv.get("messages"):
+            try:
+                from dateutil.parser import parse as parse_dt
+                last_dt = parse_dt(last)
+                now_dt = datetime.now(IST)
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=IST)
+                days_inactive = (now_dt - last_dt).total_seconds() / 86400
+                if days_inactive >= 3:
+                    # Archive old conversation, start fresh
+                    archive_dir = CONVERSATIONS_DIR / "archive"
+                    archive_dir.mkdir(exist_ok=True)
+                    archive_name = f"{phone}_{last_dt.strftime('%Y%m%d_%H%M%S')}.json"
+                    with open(archive_dir / archive_name, "w", encoding="utf-8") as af:
+                        json.dump(conv, af, indent=2, ensure_ascii=False)
+                    fresh = _new_conversation(phone)
+                    save_conversation(phone, fresh)
+                    return fresh
+            except Exception:
+                pass  # If date parsing fails, just use the conversation as-is
+        return conv
     return _new_conversation(phone)
 
 

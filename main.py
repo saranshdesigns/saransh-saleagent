@@ -879,23 +879,26 @@ async def update_pricing(request: Request, _auth=Depends(require_auth)):
 # ============================================================
 
 @app.get("/api/settings/custom-instructions")
-async def get_custom_instructions(request: Request, _auth=Depends(require_auth)):
+async def get_custom_instructions(_auth=Depends(require_auth)):
     settings = _load_settings_file()
-    return settings.get("custom_instructions", {"logo": "", "packaging": "", "website": "", "general": ""})
+    value = settings.get("custom_instructions", "")
+    # Backward-compat: if an older dict value is still on disk, flatten to a string.
+    if isinstance(value, dict):
+        parts = [f"[{k}] {v.strip()}" for k, v in value.items() if isinstance(v, str) and v.strip()]
+        value = "\n".join(parts)
+    return {"custom_instructions": value}
 
 
 @app.put("/api/settings/custom-instructions")
 async def update_custom_instructions(request: Request, _auth=Depends(require_auth)):
     body = await request.json()
+    instructions = body.get("custom_instructions", "")
+    if not isinstance(instructions, str):
+        raise HTTPException(400, detail="custom_instructions must be a string")
     settings = _load_settings_file()
-    settings["custom_instructions"] = {
-        "logo": body.get("logo", ""),
-        "packaging": body.get("packaging", ""),
-        "website": body.get("website", ""),
-        "general": body.get("general", "")
-    }
+    settings["custom_instructions"] = instructions
     _save_settings_file(settings)
-    return {"status": "updated"}
+    return {"success": True, "custom_instructions": instructions}
 
 
 # ============================================================

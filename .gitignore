@@ -28,3 +28,6 @@ Thumbs.db
 .vscode/
 .idea/
 .claude/
+config/settings.json
+config/pricing.json
+*.bak
