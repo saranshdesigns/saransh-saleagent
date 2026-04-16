@@ -238,26 +238,54 @@ async def execute_tool(tool_name: str, arguments: dict, phone: str) -> str:
 
 
 async def _exec_search_knowledge(args: dict) -> str:
-    """Search config/settings.json knowledge_base entries."""
+    """Search knowledge base using RAG pipeline (Phase 4: vector + BM25 hybrid)."""
     try:
-        import os
-        settings_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config", "settings.json")
-        with open(settings_path, "r", encoding="utf-8") as f:
-            settings = json.load(f)
-        kb = settings.get("knowledge_base", [])
-        query_lower = args.get("query", "").lower()
+        from agent.rag.retrieval import rag_search
+        query = args.get("query", "")
         limit = args.get("limit", 5)
-        # Simple keyword matching
-        results = []
-        for entry in kb:
-            q = entry.get("question", "").lower()
-            a = entry.get("answer", "")
-            if any(word in q for word in query_lower.split()):
-                results.append({"question": entry["question"], "answer": a})
-        results = results[:limit]
-        if not results:
+
+        rag_result = await rag_search(query)
+
+        if rag_result.skipped or not rag_result.chunks:
+            # Fallback: also check settings.json for backward compat
+            try:
+                settings_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config", "settings.json")
+                with open(settings_path, "r", encoding="utf-8") as f:
+                    settings = json.load(f)
+                kb = settings.get("knowledge_base", [])
+                query_lower = query.lower()
+                results = []
+                for entry in kb:
+                    q = entry.get("question", "").lower()
+                    a = entry.get("answer", "")
+                    if any(word in q for word in query_lower.split()):
+                        results.append({"question": entry["question"], "answer": a})
+                results = results[:limit]
+                if results:
+                    return json.dumps({"results": results, "source": "settings_fallback"})
+            except Exception:
+                pass
             return json.dumps({"results": [], "note": "No matching knowledge base entries found. Use your training knowledge."})
-        return json.dumps({"results": results})
+
+        # Format RAG results
+        results = []
+        for chunk in rag_result.chunks[:limit]:
+            results.append({
+                "content": chunk.content,
+                "source": chunk.doc_title,
+                "source_type": chunk.source_type,
+                "relevance": round(chunk.score, 4),
+            })
+
+        log.info("tools.search_knowledge_rag",
+                 query=query[:50], hits=len(results),
+                 embedding_tokens=rag_result.embedding_tokens)
+
+        return json.dumps({
+            "results": results,
+            "source": "rag_pipeline",
+            "embedding_tokens": rag_result.embedding_tokens,
+        })
     except Exception as e:
         log.warning("tools.search_knowledge_error", error=str(e))
         return json.dumps({"results": [], "error": str(e)})

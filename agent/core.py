@@ -20,6 +20,7 @@ log = get_logger("saransh.agent.core")
 IST = ZoneInfo("Asia/Kolkata")
 
 from agent.tools import TOOLS, execute_tool, compute_lead_score, score_bucket
+from agent.rag.retrieval import rag_search, should_skip_rag
 
 from agent.conversation import (
     load_conversation, save_conversation, add_message,
@@ -592,6 +593,31 @@ async def process_message(phone: str, message: str, image_data: str = None, wami
 
     # Build full message context
     messages = build_messages_for_openai(phone, message, image_data)
+
+    # Phase 4: RAG context injection — enrich system prompt with relevant KB chunks
+    rag_context = ""
+    rag_stats = {"embedding_tokens": 0, "retrieval_hits": 0}
+    if not image_data and message and not should_skip_rag(message):
+        try:
+            rag_result = await rag_search(message)
+            if rag_result.context:
+                rag_context = rag_result.context
+                rag_stats["embedding_tokens"] = rag_result.embedding_tokens
+                rag_stats["retrieval_hits"] = rag_result.retrieval_hits
+                # Inject as additional system context
+                rag_block = (
+                    "\n\n## KNOWLEDGE BASE CONTEXT (retrieved via RAG — use these to answer)\n"
+                    + rag_context
+                    + "\n\nUse the above knowledge to answer accurately. Cite specific details when relevant."
+                )
+                # Append to the system message
+                if messages and messages[0]["role"] == "system":
+                    messages[0]["content"] += rag_block
+                _log.info("core.rag_injected",
+                         hits=rag_stats["retrieval_hits"],
+                         embedding_tokens=rag_stats["embedding_tokens"])
+        except Exception as e:
+            _log.warning("core.rag_error", error=str(e))
 
     # Choose model
     model = "gpt-4o" if image_data else "gpt-4o-mini"
