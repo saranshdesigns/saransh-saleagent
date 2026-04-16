@@ -64,34 +64,58 @@ pip install -r "Whatsapp Assistant/requirements.txt"
 
 ## Phase 1 — Persistence parity (DB migration #1)
 
-**Status:** NOT STARTED
-**Pre-phase commit:** _(to be filled in, = post-Phase-0 commit)_
-**Post-phase commit:** _(to be filled in)_
+**Status:** COMPLETE on 2026-04-16
+**Pre-phase commit:** `d6596c7` (Phase 0)
+**Post-phase commit:** _(uncommitted — working tree changes on droplet, to be committed)_
+**Backup:** `~/backups/pre-phase1-20260416-101134.dump` (66K, pg_dump -Fc)
 
-**Files modified (planned):**
-- `saransh-dashboard/backend/prisma/schema.prisma` — add `BotConversation`, `BotMessage`, `AuditLog` tables; add `Lead.optedOut, lastInteractionAt, tags, language`
-- `saransh-dashboard/backend/prisma/migrations/<timestamp>_phase1_botpersistence/` (auto-generated)
-- `Whatsapp Assistant/modules/db.py` (new) — Prisma Python client wrapper
-- `Whatsapp Assistant/agent/conversation.py` — dual-write to JSON + Postgres
+**Scope implemented:**
+1. DB migration `20260416_phase1_bot_persistence` — 2 enums (MessageDirection, BotStage), 3 new tables (BotConversation, BotMessage, AuditLog), 3 new columns on Lead (optedOut, lastInteractionAt, language), index on Lead.waPhone. All additive, zero existing data affected.
+2. Dual-write persistence — modules/db.py (asyncpg connection pool, fire-and-forget writes). agent/conversation.py hooks: every save_conversation() syncs to BotConversation, every add_message() inserts into BotMessage. JSON remains source of truth.
+3. Opt-out handler — inbound STOP/unsubscribe/रोकें/band karo/rok do sets Lead.optedOut=true, sends confirmation, blocks future bot outbound. START/subscribe/शुरू re-subscribes. AuditLog entries written for both.
+4. DB pool lifecycle — init_pool() on FastAPI startup, close_pool() on shutdown. Graceful degradation: if DATABASE_URL not set, pool skips and all dual-writes silently no-op.
 
-**DB changes:** YES — migration #1. Diff + SQL shown for approval before apply.
+**Files modified:**
+- saransh-dashboard/backend/prisma/schema.prisma — added MessageDirection enum, BotStage enum, BotConversation model, BotMessage model, AuditLog model, Lead.optedOut/lastInteractionAt/language fields + index on waPhone
+- saransh-dashboard/backend/prisma/migrations/20260416_phase1_bot_persistence/migration.sql — manually created, applied via psql, resolved with prisma migrate resolve --applied
+- NEW modules/db.py — async Postgres layer (asyncpg pool, upsert_conversation, insert_message, audit_log, set_lead_opted_out, is_lead_opted_out, sync_conversation_to_pg, sync_message_to_pg)
+- agent/conversation.py — added asyncio import, structlog logger, _fire_pg_sync() + _fire_pg_message() hooks in save_conversation() and add_message()
+- main.py — added modules.db imports, await init_pool() in startup, await close_pool() in shutdown, opt-out check + handler before client message dispatch
+- requirements.txt — added asyncpg==0.29.0, python-dateutil==2.9.0
+- .env (droplet only) — added DATABASE_URL
+
+**DB changes:** YES — migration 20260416_phase1_bot_persistence
 
 **Revert command:**
+```bash
+# Code revert:
+git reset --hard d6596c7
+# DB rollback (run from /opt/saransh-dashboard/backend):
+npx prisma migrate resolve --rolled-back 20260416_phase1_bot_persistence
+psql "$DATABASE_URL" -c 'DROP TABLE IF EXISTS "BotMessage", "BotConversation", "AuditLog"; DROP TYPE IF EXISTS "MessageDirection", "BotStage";'
+psql "$DATABASE_URL" -c 'ALTER TABLE "Lead" DROP COLUMN IF EXISTS "optedOut", DROP COLUMN IF EXISTS "lastInteractionAt", DROP COLUMN IF EXISTS "language";'
+psql "$DATABASE_URL" -c 'DROP INDEX IF EXISTS "Lead_waPhone_idx";'
+# Restore from backup (nuclear option):
+pg_restore -Fc --clean --if-exists -d saransh_dashboard ~/backups/pre-phase1-20260416-101134.dump
 ```
-git reset --hard <pre-phase-1-commit>
-# DB rollback:
-npx prisma migrate resolve --rolled-back <migration-name>  (run from saransh-dashboard/backend)
-psql $DATABASE_URL -c "DROP TABLE IF EXISTS \"BotMessage\", \"BotConversation\", \"AuditLog\";"
-psql $DATABASE_URL -c "ALTER TABLE \"Lead\" DROP COLUMN IF EXISTS \"optedOut\", DROP COLUMN IF EXISTS \"lastInteractionAt\", DROP COLUMN IF EXISTS \"tags\", DROP COLUMN IF EXISTS \"language\";"
-```
 
-**Verification:**
-- New rows appear in `BotConversation` / `BotMessage` after test message
-- JSON file still written (dual-write)
-- Existing `Lead` / `Activity` queries from dashboard still work
+**Verification performed (2026-04-16):**
+- Pre-migration backup: ~/backups/pre-phase1-20260416-101134.dump (66K)
+- Lead count unchanged: 1 row before and after migration
+- BotConversation/BotMessage/AuditLog: 0 rows after migration (clean)
+- All Lead rows have optedOut=false (default applied correctly)
+- prisma migrate status: 3 migrations, all applied, schema up to date
+- db.pool_ready in startup logs (min=1, max=3)
+- Test webhook: BotConversation row created (stage=NEW, seriousnessScore=9)
+- Test webhook: BotMessage INBOUND row created (wamid matched, text correct)
+- JSON file also written (dual-write confirmed)
+- Correlation ID propagates: webhook.message > dispatch_client > client.handling > client.llm.begin
+- Test data cleaned up after verification
 
-**Approval needed to start:** ❌ pending Phase 0 completion + explicit user sign-off on migration #1
+**Known issues (pre-existing, not Phase 1):**
+- KeyError 'logo' in agent/core.py:408 — droplet pricing.json missing logo key. Bot crashes on LLM reply. Needs pricing.json update (separate fix).
 
+**Approval needed for Phase 2:** pending explicit user sign-off
 ---
 
 ## Phase 2 — Tiered routing + rules (DB migration #2)

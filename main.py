@@ -36,6 +36,7 @@ from modules.logging_config import (
     hash_phone,
 )
 from modules.webhook_models import WhatsAppWebhookPayload
+from modules.db import init_pool, close_pool, is_lead_opted_out, set_lead_opted_out, audit_log
 
 from agent.core import process_message, process_owner_command
 from agent.conversation import load_conversation, get_summary, mark_handoff, add_image, add_message
@@ -100,12 +101,14 @@ scheduler = AsyncIOScheduler()
 
 @app.on_event("startup")
 async def startup_event():
+    await init_pool()
     scheduler.start()
     log.info("scheduler.started")
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
+    await close_pool()
     scheduler.shutdown()
 
 VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN", "saranshdesigns_webhook_2024")
@@ -270,6 +273,29 @@ async def receive_message(request: Request):
                 type=msg_type,
                 correlation_id=cid,
             )
+
+            # Opt-out check: if lead opted out, ignore inbound (except re-subscribe)
+            if await is_lead_opted_out(phone):
+                if msg_type == "text":
+                    text_body = (message.text.body if message.text else "").strip().lower()
+                    if text_body in ("start", "subscribe", "शुरू"):
+                        await set_lead_opted_out(phone, False)
+                        await audit_log("bot", "opt_in", "Lead", entity_id=phone)
+                        from agent.whatsapp import send_text as _send
+                        await _send(phone, "Welcome back! You've been re-subscribed. How can I help you today? 🙏")
+                log.info("webhook.opted_out_skip", phone_hash=hash_phone(phone))
+                continue
+
+            # Opt-out request: STOP / रोकें / unsubscribe
+            if msg_type == "text":
+                text_body = (message.text.body if message.text else "").strip().lower()
+                if text_body in ("stop", "unsubscribe", "रोकें", "band karo", "rok do"):
+                    await set_lead_opted_out(phone, True)
+                    await audit_log("bot", "opt_out", "Lead", entity_id=phone)
+                    from agent.whatsapp import send_text as _send
+                    await _send(phone, "You've been unsubscribed. You won't receive any more messages from us. Reply START to re-subscribe anytime. 🙏")
+                    log.info("webhook.opt_out_processed", phone_hash=hash_phone(phone))
+                    continue
 
             # Blocked phone check
             try:

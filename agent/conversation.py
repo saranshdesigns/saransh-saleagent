@@ -2,10 +2,14 @@
 Conversation State Manager
 Tracks every client conversation by phone number.
 Persists to JSON files in data/conversations/
+
+Phase 1: Also dual-writes to Postgres (BotConversation + BotMessage)
+via modules.db. JSON remains source of truth.
 """
 
 import json
 import os
+import asyncio
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Optional
@@ -16,6 +20,10 @@ def _now_ist() -> str:
     """Return current IST time as ISO string."""
     return datetime.now(IST).isoformat()
 from pathlib import Path
+
+from modules.logging_config import get_logger
+
+log = get_logger("saransh.agent.conversation")
 
 CONVERSATIONS_DIR = Path("data/conversations")
 CONVERSATIONS_DIR.mkdir(parents=True, exist_ok=True)
@@ -83,6 +91,26 @@ def save_conversation(phone: str, data: dict):
     path = _get_path(phone)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
+    # Phase 1: fire-and-forget Postgres sync
+    _fire_pg_sync(phone, data)
+
+
+def _fire_pg_sync(phone: str, conv: dict, direction: str = "INBOUND"):
+    """Schedule async Postgres sync without blocking the sync caller."""
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_pg_sync_safe(phone, conv, direction))
+    except RuntimeError:
+        pass  # No running loop (sync test code) — skip
+
+
+async def _pg_sync_safe(phone: str, conv: dict, direction: str = "INBOUND"):
+    """Wrap Postgres sync so errors never bubble up."""
+    try:
+        from modules.db import sync_conversation_to_pg
+        await sync_conversation_to_pg(phone, conv, direction)
+    except Exception as e:
+        log.warning("conversation.pg_sync_error", error=str(e))
 
 
 def _new_conversation(phone: str) -> dict:
@@ -124,6 +152,31 @@ def add_message(phone: str, role: str, content: str, image_url: Optional[str] = 
     if len(conv["messages"]) > 30:
         conv["messages"] = conv["messages"][-30:]
     save_conversation(phone, conv)
+
+    # Phase 1: dual-write message to Postgres
+    _fire_pg_message(phone, role, content, wamid=wamid, image_url=image_url)
+
+
+def _fire_pg_message(phone: str, role: str, content: str, wamid: Optional[str] = None, image_url: Optional[str] = None):
+    """Schedule async BotMessage insert without blocking."""
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_pg_message_safe(phone, role, content, wamid=wamid, image_url=image_url))
+    except RuntimeError:
+        pass
+
+
+async def _pg_message_safe(phone: str, role: str, content: str, wamid: Optional[str] = None, image_url: Optional[str] = None):
+    """Wrap message insert so errors never bubble up."""
+    try:
+        from modules.db import sync_message_to_pg
+        media_type = "image" if image_url else None
+        await sync_message_to_pg(
+            phone=phone, role=role, content=content,
+            wamid=wamid, media_type=media_type, media_url=image_url,
+        )
+    except Exception as e:
+        log.warning("conversation.pg_message_error", error=str(e))
 
 
 def update_stage(phone: str, stage: str):
