@@ -245,25 +245,69 @@ psql "$DATABASE_URL" -c 'DROP TYPE IF EXISTS "MatchType", "TriggerType";'
 **Approval needed for Phase 4:** pending explicit user sign-off
 ---
 
-## Phase 4 — RAG (DB migration #3 + pgvector extension)
+## Phase 4 — RAG (Retrieval-Augmented Generation)
 
-**Status:** NOT STARTED — BLOCKED on confirming pgvector is available in Postgres
+**Status:** COMPLETE on 2026-04-16
+**Pre-phase commit:** `74b380d` (Telegram fix)
+**Post-phase commit:** `a53ecd2`
+**Backup:** `~/backups/pre-phase4-20260416-121441.dump` (105K, pg_dump -Fc)
 
-**Files modified (planned):**
-- `saransh-dashboard/backend/prisma/schema.prisma` — `KnowledgeDocument`, `KnowledgeChunk` (with `Unsupported("vector(1536)")`)
-- Custom SQL migration: `CREATE EXTENSION IF NOT EXISTS vector;` + HNSW index + tsvector GIN index
-- `Whatsapp Assistant/agent/rag.py` (new) — hybrid retrieval
-- Ingestion CLI: `Whatsapp Assistant/modules/ingest.py`
+**Scope implemented:**
+1. DB migration `20260416_phase4_rag_knowledge` — 1 enum (KnowledgeSourceType), 2 new tables (KnowledgeDocument, KnowledgeChunk), pgvector extension, HNSW + GIN indexes, tsvector auto-update trigger. All additive.
+2. `agent/rag/ingestion.py` — Document chunking (400-800 tokens, semantic paragraph/sentence boundaries), embedding via `text-embedding-3-small` (1536 dims), stores in KnowledgeDocument + KnowledgeChunk with vector embeddings.
+3. `agent/rag/retrieval.py` — 5-stage pipeline (NO Cohere, OpenAI only):
+   - **Stage 1 — Preprocess:** normalize query, skip-RAG heuristic for greetings/short messages (<8 chars)
+   - **Stage 2 — Hybrid search:** vector cosine (pgvector HNSW) + BM25 (tsvector ts_rank) in parallel, top 20 each
+   - **Stage 3 — RRF fusion:** Reciprocal Rank Fusion with k=60, merge to top 5
+   - **Stage 4 — Format:** [KB-1]..[KB-5] citations with source type, title, relevance score
+   - **Stage 5 — Inject:** appended to system prompt as `## KNOWLEDGE BASE CONTEXT` block
+4. 24 documents seeded: 4 services, 5 FAQs, 6 testimonials, 5 policies, 3 pricing docs (logo/packaging/website), 1 business info
+5. `search_knowledge` tool upgraded: RAG pipeline primary, settings.json keyword fallback
+6. Intent classifier: skips RAG for greetings/acknowledgments (saves embedding cost)
 
-**DB changes:** YES — migration #3 + extension. **Infra-affecting.** Shown separately.
+**Files modified:**
+- NEW `agent/rag/__init__.py` — module exports
+- NEW `agent/rag/ingestion.py` — chunking, embedding, document CRUD, settings.json seeder
+- NEW `agent/rag/retrieval.py` — 5-stage retrieval pipeline, RRF fusion, context formatting
+- `agent/tools.py` — `_exec_search_knowledge` replaced with RAG-backed implementation
+- `agent/core.py` — RAG import, context injection before LLM call (appends to system message)
+- `saransh-dashboard/backend/prisma/schema.prisma` — added KnowledgeSourceType enum, KnowledgeDocument model, KnowledgeChunk model
+- `saransh-dashboard/backend/prisma/migrations/20260416_phase4_rag_knowledge/migration.sql`
+
+**DB changes:** YES — `CREATE EXTENSION vector` (applied as superuser), migration 20260416_phase4_rag_knowledge + seed data (24 KnowledgeDocuments, 24 KnowledgeChunks)
 
 **Revert command:**
-```
-git reset --hard <pre-phase-4-commit>
-psql $DATABASE_URL -c "DROP TABLE IF EXISTS \"KnowledgeChunk\", \"KnowledgeDocument\";"
-# Leave pgvector extension installed — harmless to keep; drop manually only if required.
+```bash
+# Code revert:
+git reset --hard 74b380d
+# DB rollback:
+cd /opt/saransh-dashboard/backend
+npx prisma migrate resolve --rolled-back 20260416_phase4_rag_knowledge
+psql "$DATABASE_URL" -c 'DROP TABLE IF EXISTS "KnowledgeChunk" CASCADE;'
+psql "$DATABASE_URL" -c 'DROP TABLE IF EXISTS "KnowledgeDocument" CASCADE;'
+psql "$DATABASE_URL" -c 'DROP TYPE IF EXISTS "KnowledgeSourceType";'
+psql "$DATABASE_URL" -c 'DROP FUNCTION IF EXISTS knowledge_chunk_tsv_trigger() CASCADE;'
+# Extension (optional — safe to leave):
+sudo -u postgres psql -d saransh_dashboard -c 'DROP EXTENSION IF EXISTS vector;'
 ```
 
+**Cost impact:**
+- Embedding cost per query: ~10-18 tokens via text-embedding-3-small (~$0.000002 per query)
+- RAG overhead per LLM call: ~2-4 seconds (embedding + dual search + fusion)
+- Savings: more accurate responses reduce follow-up messages; skip-RAG heuristic avoids cost on greetings
+- Reranking deliberately skipped (NO Cohere). If retrieval quality drops, fallback plan: LLM-as-reranker
+
+**Verification performed (2026-04-16):**
+- pgvector 0.6.0 confirmed in saransh_dashboard database
+- Migration applied cleanly, prisma validate passed, prisma generate succeeded
+- 24 documents ingested (0 errors)
+- Test A: "tumhari pricing kya hai logo ki?" → router kr_pricing pass_to_llm → RAG vector=20, fused=5, 10 embed tokens → LLM replied with pricing from KB ✓
+- Test B: "agar mujhe design pasand nahi aaya toh refund milega kya?" → router llm_fallback → RAG vector=20, fused=5, 18 embed tokens → LLM replied with refund policy from KB ✓
+- Test C: "hi" → router kr_greeting (keyword tier, no LLM, no RAG) → tokens_saved=3000 ✓
+- Test data cleaned up after verification
+- Note: BM25 returns 0 hits for Hindi queries (expected — English tsvector dictionary). Vector search handles Hindi/Hinglish well (20 hits). Hybrid approach compensates.
+
+**Approval needed for Phase 5:** pending explicit user sign-off
 ---
 
 ## Phase 5 — Security hardening (no DB migration)
