@@ -37,6 +37,7 @@ from modules.logging_config import (
 )
 from modules.webhook_models import WhatsAppWebhookPayload
 from modules.db import init_pool, close_pool, is_lead_opted_out, set_lead_opted_out, audit_log
+from agent.router import route_message, record_route, RouteResult
 
 from agent.core import process_message, process_owner_command
 from agent.conversation import load_conversation, get_summary, mark_handoff, add_image, add_message
@@ -516,11 +517,15 @@ async def handle_client_message(phone: str, message: dict, msg_type: str):
             "timestamp": _now_ist_iso()
         })
 
-        # Greeting — split into 2 messages with 4s delay (more human feel)
-        from agent.core import _get_ist_greeting
-        _GREETINGS = {"hello", "hi", "hey", "hii", "helo", "hellow", "namaste", "namaskar", "sup", "yo", "hai", "hii"}
+        # ── Phase 2: Tiered routing ──────────────────────────
         conv_state = load_conversation(phone)
-        if conv_state.get("stage") == "new" and text.lower().strip() in _GREETINGS:
+        _current_stage = conv_state.get("stage", "new")
+        route = await route_message(phone, text, msg_type, conv_stage=_current_stage)
+        record_route(route)
+
+        # Tier: greeting (keyword rule)
+        if route.action == "greeting" and _current_stage == "new":
+            from agent.core import _get_ist_greeting
             _greet = _get_ist_greeting()
             msg1 = f"{_greet} Welcome to SaranshDesigns. How can I assist you today?"
             msg2 = "Are you looking for logo design, packaging design, or website design?"
@@ -531,10 +536,12 @@ async def handle_client_message(phone: str, message: dict, msg_type: str):
             add_message(phone, "assistant", msg1 + " " + msg2)
             return
 
-        # Call request — trigger owner alert immediately
-        lower = text.lower()
-        call_keywords = ["call me", "phone call", "call karo", "call karein", "baat karni hai", "talk on call", "speak on call", "can we call", "phone pe baat"]
-        if any(kw in lower for kw in call_keywords):
+        # Tier: greeting on non-new stage — fall through to LLM
+        if route.action == "greeting" and _current_stage != "new":
+            route = RouteResult(tier="llm", action="llm_fallback")
+
+        # Tier: call_request (keyword rule)
+        if route.action == "call_request":
             reply = "Sure, I will arrange a call for you. Please wait, I'll coordinate with Saransh Sir and you will receive a call shortly."
             await send_text(phone, reply)
             add_message(phone, "user", text, wamid=incoming_wamid)
@@ -542,17 +549,30 @@ async def handle_client_message(phone: str, message: dict, msg_type: str):
             await send_owner_alert(get_summary(phone))
             return
 
-        # Portfolio/sample request
-        if any(word in lower for word in ["sample", "portfolio", "work", "previous work", "examples", "show me"]):
+        # Tier: portfolio (keyword rule)
+        if route.action == "portfolio":
             await handle_portfolio_request(phone, text, wamid=incoming_wamid)
             return
 
-        # Standard AI processing
-        log.info("client.llm.begin")
+        # Tier: static_reply (keyword rule with pre-built response)
+        if route.action == "static_reply" and route.response:
+            await send_text(phone, route.response)
+            add_message(phone, "user", text, wamid=incoming_wamid)
+            add_message(phone, "assistant", route.response)
+            return
+
+        # Tier: opt_out / opt_in (keyword rule — already handled above in webhook loop, but safety net)
+        if route.action in ("opt_out", "opt_in"):
+            # Already handled by the opt-out check in the webhook loop
+            # If we reach here, just pass to LLM
+            route = RouteResult(tier="llm", action="llm_fallback")
+
+        # Tier: LLM fallback (pass_to_llm, llm_driven_flow, llm_fallback)
+        log.info("client.llm.begin", route_tier=route.tier, route_action=route.action)
         reply = process_message(phone, text, image_data, wamid=incoming_wamid)
-        log.info("client.llm.done", reply_preview=reply[:100], reply_len=len(reply))
+        log.info("client.llm.done", reply_preview=reply[:100], reply_len=len(reply), route_tier=route.tier)
         result = await send_text(phone, reply)
-        log.info("client.whatsapp_send", api_ok=bool(result))
+        log.info("client.whatsapp_send", api_ok=bool(result), route_tier=route.tier)
 
         # Broadcast AI reply to dashboard
         conv_state = load_conversation(phone)
