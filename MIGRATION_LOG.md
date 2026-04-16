@@ -62,6 +62,24 @@ pip install -r "Whatsapp Assistant/requirements.txt"
 
 ---
 
+## Phase 0.5 — HMAC enforcement
+
+**Status:** COMPLETE on 2026-04-16
+**Commit:** `bbc970f`
+
+**Scope implemented:**
+1. `_probe_webhook_signature()` → `_verify_webhook_signature()` — returns bool instead of void. Rejects with 401 if META_APP_SECRET is set but signature is missing or invalid.
+2. Graceful degradation: if META_APP_SECRET not set, allows through with warning log (safe for dev environments).
+3. 4 pytest tests: valid signature accepted, invalid rejected, missing rejected, no-secret allows through.
+
+**Files modified:**
+- main.py — replaced probe with enforcer, call site returns 401 on failure
+- test_webhook_models.py — added TestHMACVerification class (4 tests)
+
+**Verification:** unsigned request → 401, valid HMAC → 200, real Meta traffic `hmac_matches=true`
+
+---
+
 ## Phase 1 — Persistence parity (DB migration #1)
 
 **Status:** COMPLETE on 2026-04-16
@@ -182,19 +200,49 @@ psql "$DATABASE_URL" -c 'DROP TYPE IF EXISTS "MatchType", "TriggerType";'
 **Approval needed for Phase 3:** pending explicit user sign-off
 ---
 
-## Phase 3 — Structured tools + lead qualification (no DB migration)
+## Phase 3 — Structured tools + real-time lead scoring
 
-**Status:** NOT STARTED
+**Status:** COMPLETE on 2026-04-16
+**Pre-phase commit:** `bbc970f` (Phase 0.5)
+**Post-phase commit:** `b08fb32`
 
-**Files modified (planned):**
-- `Whatsapp Assistant/agent/tools.py` (new) — 8 strict-mode Pydantic tool schemas
-- `Whatsapp Assistant/agent/core.py` — swap free-form completions → OpenAI strict tool-calling with `parallel_tool_calls=False`; refusal handling
-- `Whatsapp Assistant/modules/db.py` — `capture_lead()` DB writer
+**Scope implemented:**
+1. 8 OpenAI tools with strict=true, parallel_tool_calls=false:
+   - search_knowledge — searches config/settings.json KB entries
+   - capture_lead — saves lead info to JSON + BotConversation, computes score
+   - escalate_to_human — triggers alert, logs AuditLog
+   - send_media — stub (queued for reply flow)
+   - mark_opted_out — LLM-initiated opt-out via DB
+   - book_appointment — creates conversation note + AuditLog
+   - check_status — stub (returns "Saransh will confirm")
+   - get_entity_details — searches KB / returns stub
+2. Lead scoring algorithm (0-100):
+   - waPhone +10, name +10, businessType +10, specificNeed +15, budgetSignal +20, timeline +15, isDecisionMaker +15, notes +5
+   - Buckets: COLD (0-30), WARM (31-60), HOT (61-85), READY_FOR_CALL (86-100)
+   - Score >= 86 auto-triggers escalate_to_human
+3. process_message() converted from sync to async for tool execution
+4. Tool-call loop: max 3 rounds of tool calls before final reply
+5. SYSTEM_PROMPT updated with TOOL USAGE section instructing LLM to use tools proactively
+6. Score persisted to JSON conversation (seriousness_score) + BotConversation.seriousnessScore
 
-**DB changes:** NONE (reuses existing `Lead`)
+**Files modified:**
+- NEW agent/tools.py — 8 Pydantic tool schemas, _schema_to_strict() converter, TOOLS list, compute_lead_score(), score_bucket(), execute_tool() dispatcher, 8 tool executors
+- agent/core.py — import tools, async process_message with tool-call loop, TOOL USAGE prompt section
+- main.py — await process_message
 
-**Revert command:** `git reset --hard <pre-phase-3-commit>`
+**DB changes:** NO — reuses existing BotConversation.seriousnessScore
 
+**Verification performed (2026-04-16):**
+- Test 1: "logo chahiye, coffee shop ke liye, budget 4000, next week chahiye"
+  - capture_lead called → score=70 (HOT), businessType=coffee shop, budget=4000, timeline=next week
+  - JSON details: business_type, specific_need, budget, timeline all captured
+- Test 2: "haan mai malik hu, mera naam Raj hai" (follow-up)
+  - capture_lead called → name=Raj, isDecisionMaker=true → score=95 (READY_FOR_CALL)
+  - Auto-escalation triggered → escalate_to_human called by LLM (urgency=high)
+  - Reply: "Perfect Raj! ... Saransh Sharma sir ko notify kar raha hoon"
+- All 11 pytest tests still pass (7 Phase 0 + 4 Phase 0.5)
+
+**Approval needed for Phase 4:** pending explicit user sign-off
 ---
 
 ## Phase 4 — RAG (DB migration #3 + pgvector extension)
