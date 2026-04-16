@@ -19,6 +19,8 @@ log = get_logger("saransh.agent.core")
 
 IST = ZoneInfo("Asia/Kolkata")
 
+from agent.tools import TOOLS, execute_tool, compute_lead_score, score_bucket
+
 from agent.conversation import (
     load_conversation, save_conversation, add_message,
     update_stage, update_service, update_details,
@@ -394,6 +396,18 @@ Professional. Confident. Friendly. Direct. Short responses. No unnecessary fille
 Always refer to the Owner as *Saransh Sharma sir* — never "ji", never just "Saransh", never "Saransh Sir" alone.
 Correct: "I'll connect you with Saransh Sharma sir."
 Wrong: "Saransh ji", "Saransh Sir", "the Owner"
+
+## TOOL USAGE (MANDATORY)
+You have tools available. USE THEM proactively:
+
+- **capture_lead**: Call this EVERY TIME the client shares qualifying info — name, business type, specific need, budget, timeline, or confirms they are the decision maker. Don't wait for all fields — call with whatever you have, and call again when you learn more. Each call updates the lead score.
+- **search_knowledge**: Call this when client asks about processes, policies, deliverables, or anything that might be in the knowledge base.
+- **escalate_to_human**: Call this when the client is frustrated, requests human contact, or the deal is ready for handoff to Saransh Sharma sir.
+- **book_appointment**: Call this when client wants to schedule a call or meeting.
+- **check_status**: Call this when client asks about order/quote/project status.
+- **get_entity_details**: Call this for detailed info about services/packages.
+
+IMPORTANT: Always respond naturally to the client AFTER the tool executes. The tool result is for your context — the client should see a friendly conversational reply, not raw tool output.
 """
 
 
@@ -551,11 +565,15 @@ def _get_ist_greeting() -> str:
         return "Good evening!"
 
 
-def process_message(phone: str, message: str, image_data: str = None, wamid: str = None) -> str:
+async def process_message(phone: str, message: str, image_data: str = None, wamid: str = None) -> str:
     """
     Main entry point. Process incoming message and return agent's reply.
     Uses gpt-4o-mini normally, gpt-4o if image is present.
+    Phase 3: includes structured tool calling with strict=true.
     """
+    from modules.logging_config import get_logger
+    _log = get_logger("saransh.agent.core")
+
     conv = load_conversation(phone)
     is_first_message = len(conv.get("messages", [])) == 0
 
@@ -578,14 +596,57 @@ def process_message(phone: str, message: str, image_data: str = None, wamid: str
     # Choose model
     model = "gpt-4o" if image_data else "gpt-4o-mini"
 
+    # Phase 3: call with tools (strict=true), parallel_tool_calls=false
     response = client.chat.completions.create(
         model=model,
         messages=messages,
+        tools=TOOLS,
+        parallel_tool_calls=False,
         max_tokens=600,
-        temperature=0.7
+        temperature=0.7,
     )
 
-    reply = response.choices[0].message.content.strip()
+    msg = response.choices[0].message
+
+    # Handle refusal (OpenAI safety)
+    if hasattr(msg, "refusal") and msg.refusal:
+        _log.warning("core.llm_refusal", refusal=msg.refusal)
+        reply = "I appreciate your message! Let me connect you with Saransh Sharma sir for this."
+    # Handle tool calls — execute and feed results back (max 3 rounds)
+    elif msg.tool_calls:
+        messages.append(msg)
+        for _round in range(3):
+            for tool_call in msg.tool_calls:
+                fn_name = tool_call.function.name
+                try:
+                    fn_args = json.loads(tool_call.function.arguments)
+                except Exception:
+                    fn_args = {}
+                _log.info("core.tool_call", tool=fn_name, round=_round)
+                result = await execute_tool(fn_name, fn_args, phone)
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": result,
+                })
+            # Get next response
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                tools=TOOLS,
+                parallel_tool_calls=False,
+                max_tokens=600,
+                temperature=0.7,
+            )
+            msg = response.choices[0].message
+            if not msg.tool_calls:
+                break
+            messages.append(msg)
+        reply = (msg.content or "").strip()
+        if not reply:
+            reply = "Let me connect you with Saransh Sharma sir for more details."
+    else:
+        reply = (msg.content or "").strip()
 
     # Hardcode greeting on first message — don't rely on AI to do it
     _greeting_words = ("good morning", "good afternoon", "good evening")

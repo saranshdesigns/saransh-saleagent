@@ -583,7 +583,7 @@ async def handle_client_message(phone: str, message: dict, msg_type: str):
 
         # Tier: LLM fallback (pass_to_llm, llm_driven_flow, llm_fallback)
         log.info("client.llm.begin", route_tier=route.tier, route_action=route.action)
-        reply = process_message(phone, text, image_data, wamid=incoming_wamid)
+        reply = await process_message(phone, text, image_data, wamid=incoming_wamid)
         log.info("client.llm.done", reply_preview=reply[:100], reply_len=len(reply), route_tier=route.tier)
         result = await send_text(phone, reply)
         log.info("client.whatsapp_send", api_ok=bool(result), route_tier=route.tier)
