@@ -117,10 +117,11 @@ OWNER_PHONE = os.getenv("OWNER_PHONE", "918850069662")
 META_APP_SECRET = os.getenv("META_APP_SECRET", "")
 
 
-def _probe_webhook_signature(raw_body: bytes, signature_header: str) -> None:
+def _verify_webhook_signature(raw_body: bytes, signature_header: str) -> bool:
     """
-    LOG-ONLY HMAC probe (Phase 0). Does NOT enforce — observability only.
-    24h observation period before Phase 0.5 flips enforcement on.
+    Phase 0.5 — HMAC signature enforcement.
+    Returns True if signature is valid. Returns False to reject (401).
+    If META_APP_SECRET is not set, logs warning and allows (graceful degradation).
     """
     secret_present = bool(META_APP_SECRET)
     header_present = bool(signature_header)
@@ -141,6 +142,19 @@ def _probe_webhook_signature(raw_body: bytes, signature_header: str) -> None:
         hmac_matches=matches,
         body_bytes=len(raw_body),
     )
+
+    # Enforcement: reject if secret is set but signature is missing or invalid
+    if secret_present:
+        if not header_present:
+            log.warning("webhook.signature_missing", body_bytes=len(raw_body))
+            return False
+        if not matches:
+            log.warning("webhook.signature_mismatch", sig_prefix=sig_prefix)
+            return False
+    else:
+        log.warning("webhook.secret_not_set", note="HMAC not enforced — set META_APP_SECRET")
+
+    return True
 
 
 # --- Message Deduplication (in-memory, max 500 wamids) ---
@@ -215,8 +229,8 @@ async def receive_message(request: Request):
     # Read raw body FIRST for signature probe, then parse JSON
     raw_body = await request.body()
     signature_header = request.headers.get("X-Hub-Signature-256", "")
-    _probe_webhook_signature(raw_body, signature_header)
-    # NOTE: Phase 0 — log-only probe, NOT enforcing. Phase 0.5 will 401 on mismatch.
+    if not _verify_webhook_signature(raw_body, signature_header):
+        return Response(status_code=401)
 
     # Parse + validate against Pydantic model. On schema failure: log + 200
     # (do not make Meta retry on our parsing bug).

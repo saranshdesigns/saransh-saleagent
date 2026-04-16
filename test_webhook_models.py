@@ -181,3 +181,53 @@ def test_malformed_message_missing_required_field_raises():
     }
     with pytest.raises(ValidationError):
         WhatsAppWebhookPayload.model_validate(bad)
+
+
+
+# ── Phase 0.5: HMAC signature tests ─────────────────────
+
+import hmac as _hmac
+import hashlib
+
+
+def _make_signature(secret: str, body: bytes) -> str:
+    return "sha256=" + _hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+
+class TestHMACVerification:
+    """Tests for _verify_webhook_signature in main.py."""
+
+    def setup_method(self):
+        import main
+        self.verify = main._verify_webhook_signature
+        self._original_secret = main.META_APP_SECRET
+
+    def teardown_method(self):
+        import main
+        main.META_APP_SECRET = self._original_secret
+
+    def test_valid_signature_accepted(self):
+        import main
+        main.META_APP_SECRET = "test_secret_12345"
+        body = b'{"test": true}'
+        sig = _make_signature("test_secret_12345", body)
+        assert self.verify(body, sig) is True
+
+    def test_invalid_signature_rejected(self):
+        import main
+        main.META_APP_SECRET = "test_secret_12345"
+        body = b'{"test": true}'
+        bad_sig = "sha256=0000000000000000000000000000000000000000000000000000000000000000"
+        assert self.verify(body, bad_sig) is False
+
+    def test_missing_signature_rejected(self):
+        import main
+        main.META_APP_SECRET = "test_secret_12345"
+        body = b'{"test": true}'
+        assert self.verify(body, "") is False
+
+    def test_no_secret_allows_through(self):
+        import main
+        main.META_APP_SECRET = ""
+        body = b'{"test": true}'
+        assert self.verify(body, "") is True
