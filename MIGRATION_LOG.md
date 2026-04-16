@@ -310,19 +310,96 @@ sudo -u postgres psql -d saransh_dashboard -c 'DROP EXTENSION IF EXISTS vector;'
 **Approval needed for Phase 5:** pending explicit user sign-off
 ---
 
-## Phase 5 — Security hardening (no DB migration)
+## Phase 5 — Security & Hardening
 
-**Status:** NOT STARTED
+**Status:** COMPLETE on 2026-04-16
+**Pre-phase commit:** `da881d8` (Phase 4 MIGRATION_LOG)
+**Post-phase commit:** `79a8f7c`
 
-**Files modified (planned):**
-- `Whatsapp Assistant/agent/security.py` (new) — input sanitizer, output prompt-injection filter, AES-256-GCM helpers
-- `Whatsapp Assistant/main.py` — wire sanitizer + per-number Redis rate-limit; enforce `Lead.optedOut` on every outbound
-- `Whatsapp Assistant/agent/whatsapp.py` — opt-out gate before every send
+**Scope implemented:**
 
-**DB changes:** NONE
+### 1. Rate Limiting (Redis-backed)
+- `agent/security/rate_limit.py` — sliding window via Redis sorted sets
+- Per-phone inbound: 20 messages / 60 seconds (silently drops excess)
+- Per-phone outbound: 15 replies / 60 seconds (queues with backoff)
+- Per-IP webhook: 100 requests / 60 seconds (returns 429)
+- **Graceful degradation:** if Redis is down, FAILS OPEN — never breaks the bot
+- Redis installed via `apt-get install redis-server`, runs on localhost:6379
+- `REDIS_URL=redis://localhost:6379/0` added to `.env`
 
-**Revert command:** `git reset --hard <pre-phase-5-commit>`
+### 2. Input Sanitization (Prompt Injection Defense)
+- `agent/security/input_filter.py` — 7-layer defense
+- Strips: "ignore previous instructions" (EN + Hindi), role-injection prefixes (`system:`, `assistant:`), markdown heading role redefinition, base64 blobs (40+ chars)
+- Flags: excessive RTL/unicode control characters
+- Length limit: rejects messages > 4000 chars
+- **Safe for Hindi/Hinglish:** "मुझे logo design करवाना है" and "bhai packaging ka price kya hai" pass through unchanged
+- Flagged messages are logged but NOT blocked (monitoring-only, doesn't break UX)
 
+### 3. Output Filtering (Secret Leak Prevention)
+- `agent/security/output_filter.py` — regex scan before every outbound message
+- Blocks: OpenAI keys (`sk-...`), Bearer tokens, Slack tokens, 40+ char secrets near key/token/password keywords
+- Blocks: phone numbers other than current conversation's, emails except business (`radharamangd@gmail.com`, `saransh@saransh.space`, `*@saranshdesigns.com`)
+- Blocks: UPI IDs, internal system paths (`/opt/...`, `/home/...`, `C:\...`), env variable values
+- Safe: portfolio URLs (`https://saransh.space/`), pricing (`₹5,000`), "Saransh Sharma sir" mentions
+- On leak: returns generic Hindi reply + sends Telegram alert (🚨 OUTPUT LEAK BLOCKED)
+
+### 4. Encryption at Rest (AES-256-GCM)
+- `agent/security/crypto.py` — low-level encrypt/decrypt with `enc:v1:` prefix
+- `modules/secrets_manager.py` — high-level wrapper for conversation PII
+- Encrypted fields: `collectedDetails`, `agreed_price`, `notes`
+- NOT encrypted: phone numbers (needed for indexing), message IDs, timestamps
+- `APP_ENCRYPTION_KEY` generated via `openssl rand -base64 32`, stored in `.env`
+- Legacy rows: plaintext passes through decrypt unchanged (no migration needed)
+- Idempotent: already-encrypted values are not double-encrypted
+
+### 5. Wiring
+- `main.py`: IP rate limit after HMAC check → phone rate limit after blocked-phone check → input sanitization before routing
+- `agent/whatsapp.py`: output filter + outbound rate limit in `send_text()` before WhatsApp API call
+- `agent/conversation.py`: encrypt on `save_conversation()`, decrypt on `load_conversation()`
+- Redis init/close in app startup/shutdown lifecycle
+
+**Files modified:**
+- NEW `agent/security/__init__.py` — module exports
+- NEW `agent/security/rate_limit.py` — Redis sliding-window rate limiter
+- NEW `agent/security/input_filter.py` — prompt injection sanitizer
+- NEW `agent/security/output_filter.py` — outbound leak scanner
+- NEW `agent/security/crypto.py` — AES-256-GCM encrypt/decrypt
+- NEW `modules/secrets_manager.py` — conversation PII encryption wrapper
+- NEW `test_phase5_security.py` — 14 pytest tests (all passing)
+- `main.py` — security imports, Redis lifecycle, IP + phone rate limiting, input sanitization
+- `agent/whatsapp.py` — output filter + outbound rate limit in send_text
+- `agent/conversation.py` — encrypt on save, decrypt on load
+- `requirements.txt` — added `redis>=5.0.0`, `cryptography>=42.0.0`
+
+**DB changes:** NONE (all security is application-layer)
+
+**Infrastructure changes:**
+- Redis server installed (`apt-get install redis-server`)
+- `REDIS_URL` and `APP_ENCRYPTION_KEY` added to `.env`
+
+**Revert command:**
+```bash
+# Code revert:
+git reset --hard da881d8
+systemctl restart saransh-agent
+# Redis (optional — safe to leave):
+systemctl stop redis-server
+apt-get remove redis-server
+# .env cleanup:
+sed -i '/APP_ENCRYPTION_KEY/d' .env
+sed -i '/REDIS_URL/d' .env
+```
+
+**Verification performed (2026-04-16):**
+- 14/14 pytest tests passed (0.48s)
+- Rate limit: 20 allowed → 21st blocked, phone_hash logged ✓
+- Input filter: Hindi benign passes, injection flagged + stripped ✓
+- Output filter: API key blocked + Telegram alert, foreign phone blocked, normal reply passes ✓
+- Encryption: roundtrip AES-GCM, selective field encryption, legacy passthrough, idempotent ✓
+- Service restart: clean startup, `rate_limit.redis_connected` logged ✓
+- Bot functional: no downtime during deployment
+
+**Phase 6 (optional):** Multi-language detection + Meta Native Flows — not authorized, separate scope
 ---
 
 ## Phase 6 (optional) — Multi-language + Flows + voice
