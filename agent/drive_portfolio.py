@@ -27,6 +27,10 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 from google.oauth2 import service_account
 
+from modules.logging_config import get_logger
+
+log = get_logger("saransh.agent.drive_portfolio")
+
 load_dotenv()
 
 CREDENTIALS_PATH = os.getenv("GOOGLE_CREDENTIALS_PATH", "credentials/google_service_account.json")
@@ -361,7 +365,7 @@ def get_drive_samples(service_name: str, category: str = None, packaging_type: s
         }
 
     except Exception as e:
-        print(f"[Drive] Error: {e}")
+        log.warning("drive.error", error=str(e))
         return {
             "found": False, "exact_match": False, "files": [],
             "message": "Portfolio temporarily unavailable. Please check our links below."

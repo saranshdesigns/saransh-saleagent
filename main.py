@@ -28,6 +28,15 @@ from slowapi.errors import RateLimitExceeded
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.base import JobLookupError
 
+from modules.logging_config import (
+    configure_logging,
+    get_logger,
+    new_correlation_id,
+    set_phone_hash,
+    hash_phone,
+)
+from modules.webhook_models import WhatsAppWebhookPayload
+
 from agent.core import process_message, process_owner_command
 from agent.conversation import load_conversation, get_summary, mark_handoff, add_image, add_message
 from agent.whatsapp import (
@@ -41,6 +50,30 @@ from agent.portfolio import get_samples
 from agent.dashboard_auth import verify_password, create_access_token, require_auth
 
 load_dotenv()
+
+# --- Logging & error tracking setup (must run before FastAPI app init) ---
+configure_logging()
+log = get_logger("saransh.main")
+
+_SENTRY_DSN = os.getenv("SENTRY_DSN", "").strip()
+if _SENTRY_DSN:
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        from sentry_sdk.integrations.starlette import StarletteIntegration
+
+        sentry_sdk.init(
+            dsn=_SENTRY_DSN,
+            traces_sample_rate=0.1,
+            send_default_pii=False,
+            integrations=[FastApiIntegration(), StarletteIntegration()],
+            environment=os.getenv("APP_ENV", "production"),
+        )
+        log.info("sentry.initialized", environment=os.getenv("APP_ENV", "production"))
+    except Exception as _sentry_exc:
+        log.warning("sentry.init_failed", error=str(_sentry_exc))
+else:
+    log.info("sentry.skipped", reason="SENTRY_DSN not set")
 
 PRICING_PATH = Path("config/pricing.json")
 SETTINGS_PATH = Path("config/settings.json")
@@ -68,7 +101,7 @@ scheduler = AsyncIOScheduler()
 @app.on_event("startup")
 async def startup_event():
     scheduler.start()
-    print("Scheduler started")
+    log.info("scheduler.started")
 
 
 @app.on_event("shutdown")
@@ -80,17 +113,30 @@ OWNER_PHONE = os.getenv("OWNER_PHONE", "918850069662")
 META_APP_SECRET = os.getenv("META_APP_SECRET", "")
 
 
-def _verify_webhook_signature(raw_body: bytes, signature_header: str) -> bool:
-    """Verify Meta webhook signature using HMAC-SHA256."""
-    if not META_APP_SECRET:
-        print("⚠️ META_APP_SECRET not set — skipping signature verification")
-        return True
-    if not signature_header:
-        return False
-    expected = "sha256=" + hmac.new(
-        META_APP_SECRET.encode("utf-8"), raw_body, hashlib.sha256
-    ).hexdigest()
-    return hmac.compare_digest(expected, signature_header)
+def _probe_webhook_signature(raw_body: bytes, signature_header: str) -> None:
+    """
+    LOG-ONLY HMAC probe (Phase 0). Does NOT enforce — observability only.
+    24h observation period before Phase 0.5 flips enforcement on.
+    """
+    secret_present = bool(META_APP_SECRET)
+    header_present = bool(signature_header)
+    sig_prefix = signature_header[:8] if signature_header else ""
+
+    matches: bool | None = None
+    if secret_present and header_present:
+        expected = "sha256=" + hmac.new(
+            META_APP_SECRET.encode("utf-8"), raw_body, hashlib.sha256
+        ).hexdigest()
+        matches = hmac.compare_digest(expected, signature_header)
+
+    log.info(
+        "webhook.signature_probe",
+        secret_env_set=secret_present,
+        signature_header_present=header_present,
+        signature_prefix=sig_prefix,
+        hmac_matches=matches,
+        body_bytes=len(raw_body),
+    )
 
 
 # --- Message Deduplication (in-memory, max 500 wamids) ---
@@ -146,7 +192,7 @@ async def verify_webhook(request: Request):
     challenge = params.get("hub.challenge")
 
     if mode == "subscribe" and token == VERIFY_TOKEN:
-        print("✅ Webhook verified successfully")
+        log.info("webhook.verified", mode=mode)
         return PlainTextResponse(content=challenge)
     else:
         raise HTTPException(status_code=403, detail="Verification failed")
@@ -159,72 +205,99 @@ async def verify_webhook(request: Request):
 @app.post("/webhook")
 @limiter.limit("60/minute")
 async def receive_message(request: Request):
-    # Read raw body FIRST for signature verification, then parse JSON
+    # Correlation ID for this webhook request — flows to every downstream log line
+    cid = new_correlation_id()
+
+    # Read raw body FIRST for signature probe, then parse JSON
     raw_body = await request.body()
     signature_header = request.headers.get("X-Hub-Signature-256", "")
-    if not _verify_webhook_signature(raw_body, signature_header):
-        print("🚫 Webhook signature verification FAILED — rejecting request")
-        return Response(status_code=403, content="Invalid signature")
+    _probe_webhook_signature(raw_body, signature_header)
+    # NOTE: Phase 0 — log-only probe, NOT enforcing. Phase 0.5 will 401 on mismatch.
 
-    body = json.loads(raw_body)
-    print(f"\n📩 Webhook received: {json.dumps(body, indent=2)[:500]}")
+    # Parse + validate against Pydantic model. On schema failure: log + 200
+    # (do not make Meta retry on our parsing bug).
+    try:
+        raw_dict = json.loads(raw_body)
+    except Exception as e:
+        log.error("webhook.json_parse_failed", error=str(e), body_bytes=len(raw_body))
+        return Response(status_code=200)
 
     try:
-        entry = body.get("entry", [{}])[0]
-        changes = entry.get("changes", [{}])[0]
-        value = changes.get("value", {})
-        messages = value.get("messages", [])
+        payload = WhatsAppWebhookPayload.model_validate(raw_dict)
+    except Exception as e:
+        log.error(
+            "webhook.pydantic_validation_failed",
+            error=str(e),
+            object=raw_dict.get("object") if isinstance(raw_dict, dict) else None,
+        )
+        return Response(status_code=200)
+
+    log.info(
+        "webhook.received",
+        object=payload.object,
+        messages_count=len(payload.messages()),
+    )
+
+    try:
+        messages = payload.messages()
 
         if not messages:
-            print("ℹ️ No messages in payload (status update or other event)")
+            log.info("webhook.no_messages", note="status update or other event")
             return Response(status_code=200)
 
         for message in messages:
             # --- Message Deduplication ---
-            wamid = message.get("id", "")
+            wamid = message.id or ""
             if wamid:
                 if wamid in _seen_wamids_set:
-                    print(f"🔁 Duplicate wamid {wamid} — skipping")
+                    log.info("webhook.duplicate_wamid", wamid=wamid)
                     continue
-                # Add to deque; evict oldest if full
                 if len(_seen_wamids) >= _seen_wamids.maxlen:
                     evicted = _seen_wamids[0]
                     _seen_wamids_set.discard(evicted)
                 _seen_wamids.append(wamid)
                 _seen_wamids_set.add(wamid)
-            phone = message.get("from", "")
-            msg_type = message.get("type", "")
-            print(f"📱 Message from: {phone} | Type: {msg_type}")
+            phone = message.from_ or ""
+            msg_type = message.type or ""
 
             if not phone:
                 continue
+
+            set_phone_hash(phone)
+            log.info(
+                "webhook.message",
+                message_id=wamid,
+                type=msg_type,
+                correlation_id=cid,
+            )
 
             # Blocked phone check
             try:
                 _settings = _load_settings_file()
                 if phone in _settings.get("blocked_phones", []):
-                    print(f"🚫 Blocked phone {phone} — ignoring message")
+                    log.info("webhook.phone_blocked", phone_hash=hash_phone(phone))
                     continue
             except Exception:
                 pass
 
+            # Legacy downstream code expects raw-dict messages. Pass model_dump.
+            message_dict = message.model_dump(by_alias=True, exclude_none=True)
+
             # Owner commands
             if phone == OWNER_PHONE:
-                print(f"👑 Owner message detected")
+                log.info("webhook.owner_message", type=msg_type)
                 if msg_type == "text":
-                    text = message.get("text", {}).get("body", "")
+                    text = message.text.body if message.text else ""
                     reply = process_owner_command(text)
                     await send_text(phone, reply)
                 continue
 
             # Client messages
-            print(f"🔄 Processing client message from {phone}...")
-            asyncio.create_task(handle_client_message(phone, message, msg_type))
+            log.info("webhook.dispatch_client", type=msg_type)
+            asyncio.create_task(handle_client_message(phone, message_dict, msg_type))
 
     except Exception as e:
-        print(f"❌ Error processing webhook: {e}")
-        import traceback
-        traceback.print_exc()
+        log.exception("webhook.processing_error", error=str(e))
 
     return Response(status_code=200)
 
@@ -339,7 +412,8 @@ async def handle_client_message(phone: str, message: dict, msg_type: str):
         image_data = None
         text = ""
         incoming_wamid = message.get("id")
-        print(f"⚙️ Handling message from {phone}...")
+        set_phone_hash(phone)
+        log.info("client.handling", type=msg_type)
 
         # --- CONTEXT REVIVAL & CLOSED STAGE CHECK ---
         from agent.conversation import ConversationStage as CS
@@ -448,12 +522,11 @@ async def handle_client_message(phone: str, message: dict, msg_type: str):
             return
 
         # Standard AI processing
-        print(f"🤖 Sending to OpenAI for processing...")
+        log.info("client.llm.begin")
         reply = process_message(phone, text, image_data, wamid=incoming_wamid)
-        print(f"✅ AI reply generated: {reply[:100]}...")
-        print(f"📤 Sending reply to {phone}...")
+        log.info("client.llm.done", reply_preview=reply[:100], reply_len=len(reply))
         result = await send_text(phone, reply)
-        print(f"📬 WhatsApp API response: {result}")
+        log.info("client.whatsapp_send", api_ok=bool(result))
 
         # Broadcast AI reply to dashboard
         conv_state = load_conversation(phone)
@@ -501,9 +574,7 @@ async def handle_client_message(phone: str, message: dict, msg_type: str):
             )
 
     except Exception as e:
-        print(f"❌ Error handling client message from {phone}: {e}")
-        import traceback
-        traceback.print_exc()
+        log.exception("client.handling_error", error=str(e))
 
 
 PORTFOLIO_LINKS = (
@@ -1142,7 +1213,6 @@ async def agent_status():
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("APP_PORT", 8000))
-    print(f"🚀 SaranshDesigns AI Agent starting on port {port}")
-    print(f"📊 Dashboard available at: http://localhost:{port}/dashboard/")
+    log.info("app.starting", port=port, dashboard_url=f"http://localhost:{port}/dashboard/")
     is_dev = os.getenv("DEBUG", "false").lower() == "true"
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=is_dev)

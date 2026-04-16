@@ -10,6 +10,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 from agent.telegram_alert import send_telegram_alert
 
+from modules.logging_config import get_logger
+
+log = get_logger("saransh.agent.whatsapp")
+
 load_dotenv()
 
 PHONE_NUMBER_ID = os.getenv("META_PHONE_NUMBER_ID")
@@ -155,32 +159,32 @@ async def send_owner_alert(summary: dict):
     alert_message = _build_alert_message(summary)
 
     if not OWNER_PHONE:
-        print("⚠️ OWNER_PHONE not set — alert not sent!")
+        log.warning("owner_alert.skipped", reason="OWNER_PHONE not set")
         return alert_message
 
     # --- Primary: Template message (no 24h restriction) ---
-    print(f"📣 Sending owner alert via TEMPLATE to {OWNER_PHONE}...")
+    log.info("owner_alert.template_send", owner_phone_hash=OWNER_PHONE[-4:] if OWNER_PHONE else "")
     template_result = await _send_template_message(
         OWNER_PHONE, "owner_alert_handoff", [alert_message]
     )
-    print(f"📣 Template API response: {template_result}")
+    log.info("owner_alert.template_response", response=str(template_result)[:300])
 
     # --- Parallel: Telegram alert (backup channel, always attempted) ---
     try:
         tg_ok = await send_telegram_alert(alert_message)
-        print(f"📨 Telegram alert: {'sent ✅' if tg_ok else 'skipped/failed'}")
+        log.info("telegram_alert.sent", ok=bool(tg_ok))
     except Exception as e:
-        print(f"📨 Telegram alert error (non-fatal): {e}")
+        log.warning("telegram_alert.error", error=str(e))
 
     # Check if template succeeded
     if template_result.get("messages"):
-        print("✅ Owner alert sent via template successfully.")
+        log.info("owner_alert.template_success")
         return alert_message
 
     # --- Fallback: Plain text (only works within 24h window) ---
-    print(f"⚠️ Template failed — falling back to plain text for {OWNER_PHONE}...")
+    log.warning("owner_alert.template_failed_fallback_text")
     fallback_result = await send_text(OWNER_PHONE, alert_message)
-    print(f"📣 Fallback plain text API response: {fallback_result}")
+    log.info("owner_alert.fallback_response", response=str(fallback_result)[:300])
 
     return alert_message
 
@@ -199,16 +203,16 @@ Client Phone: {phone}
 What should I reply?"""
 
     if OWNER_PHONE:
-        print(f"⚠️ Sending escalation alert to {OWNER_PHONE}...")
+        log.info("escalation_alert.send")
         result = await send_text(OWNER_PHONE, message)
-        print(f"⚠️ Escalation alert API response: {result}")
+        log.info("escalation_alert.response", response=str(result)[:300])
 
     # Parallel: Telegram
     try:
         tg_ok = await send_telegram_alert(message)
-        print(f"📨 Telegram escalation: {'sent ✅' if tg_ok else 'skipped/failed'}")
+        log.info("telegram_escalation.sent", ok=bool(tg_ok))
     except Exception as e:
-        print(f"📨 Telegram escalation error (non-fatal): {e}")
+        log.warning("telegram_escalation.error", error=str(e))
 
 
 async def download_media(media_id: str) -> bytes:

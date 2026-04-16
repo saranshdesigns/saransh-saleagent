@@ -13,6 +13,10 @@ from zoneinfo import ZoneInfo
 from openai import OpenAI
 from dotenv import load_dotenv
 
+from modules.logging_config import get_logger
+
+log = get_logger("saransh.agent.core")
+
 IST = ZoneInfo("Asia/Kolkata")
 
 from agent.conversation import (
@@ -694,7 +698,7 @@ Only set a field if the client explicitly mentioned it. Do not guess."""
             save_conversation(phone, conv)
 
     except Exception as e:
-        print(f"[Core] Detail extraction error: {e}")
+        log.warning("core.detail_extraction_error", error=str(e))
 
 
 def process_owner_command(command: str) -> str:
