@@ -118,29 +118,68 @@ pg_restore -Fc --clean --if-exists -d saransh_dashboard ~/backups/pre-phase1-202
 **Approval needed for Phase 2:** pending explicit user sign-off
 ---
 
-## Phase 2 — Tiered routing + rules (DB migration #2)
+## Phase 2 — Tiered routing + keyword rules + conversation flows
 
-**Status:** NOT STARTED
-**Pre-phase commit:** _(TBD)_
-**Post-phase commit:** _(TBD)_
+**Status:** COMPLETE on 2026-04-16
+**Pre-phase commit:** `d8696fe` (config untrack)
+**Post-phase commit:** `8922703`
+**Backup:** `~/backups/pre-phase2-20260416-105539.dump` (84K, pg_dump -Fc)
 
-**Files modified (planned):**
-- `saransh-dashboard/backend/prisma/schema.prisma` — add `ConversationFlow`, `KeywordRule`, `CannedResponse`
-- `saransh-dashboard/backend/prisma/migrations/<timestamp>_phase2_routing/`
-- `Whatsapp Assistant/agent/router.py` (new) — active-flow → keyword → LLM
-- `Whatsapp Assistant/main.py` — wire router into webhook handler
-- Seed script for default `ConversationFlow` row mirroring current 10-stage state machine
+**Scope implemented:**
+1. DB migration `20260416_phase2_tiered_routing` — 2 enums (MatchType, TriggerType), 3 new tables (KeywordRule, ConversationFlow, CannedResponse), 2 new columns on BotConversation (activeFlowId, flowStepIndex). All additive, zero existing data affected.
+2. 12 seeded KeywordRules with user-requested tweaks:
+   - call_request split into EXACT (short phrases, priority 15) + CONTAINS (longer phrases, priority 16) to prevent false positives on "don't call me"
+   - payment rule uses GENERIC response only (no UPI/bank details)
+   - pricing_inquiry rule (priority 40) with action=pass_to_llm so LLM handles variable pricing intelligently
+3. 1 seeded ConversationFlow (`cf_sales_default`) — data-driven representation of existing 10-stage sales state machine. Marked llm_driven=true so execution still uses agent/core.py (behavior identical).
+4. Router (`agent/router.py`) — 3-tier routing: active-flow → keyword-rule → LLM fallback. In-memory rule cache with 5min TTL. Per-message structlog with route_tier key.
+5. Cost tracking — in-memory counters: messages_handled_by_tier (flow/keyword/llm), tokens_saved_estimate (~3000 per skipped LLM call). Logged via router.stats event.
 
-**DB changes:** YES — migration #2.
+**Files modified:**
+- saransh-dashboard/backend/prisma/schema.prisma — added MatchType enum, TriggerType enum, KeywordRule model, ConversationFlow model, CannedResponse model, BotConversation.activeFlowId + flowStepIndex
+- saransh-dashboard/backend/prisma/migrations/20260416_phase2_tiered_routing/migration.sql — manually created, applied via psql, resolved with prisma migrate resolve --applied
+- NEW agent/router.py — RouteResult dataclass, _load_rules() with cache, _match_rule() (EXACT/CONTAINS/REGEX), _check_active_flow(), route_message(), record_route(), get_stats()
+- main.py — replaced hardcoded greeting/call/portfolio/LLM blocks with router-driven dispatch. Added router import, route_message() call, action handlers for each tier.
+
+**DB changes:** YES — migration 20260416_phase2_tiered_routing + seed data (12 KeywordRules, 1 ConversationFlow)
 
 **Revert command:**
-```
-git reset --hard <pre-phase-2-commit>
-psql $DATABASE_URL -c "DROP TABLE IF EXISTS \"CannedResponse\", \"KeywordRule\", \"ConversationFlow\";"
+```bash
+# Code revert:
+git reset --hard d8696fe
+# DB rollback:
+cd /opt/saransh-dashboard/backend
+npx prisma migrate resolve --rolled-back 20260416_phase2_tiered_routing
+psql "$DATABASE_URL" -c 'ALTER TABLE "BotConversation" DROP CONSTRAINT IF EXISTS "BotConversation_activeFlowId_fkey";'
+psql "$DATABASE_URL" -c 'ALTER TABLE "BotConversation" DROP COLUMN IF EXISTS "activeFlowId", DROP COLUMN IF EXISTS "flowStepIndex";'
+psql "$DATABASE_URL" -c 'DROP TABLE IF EXISTS "CannedResponse", "KeywordRule", "ConversationFlow";'
+psql "$DATABASE_URL" -c 'DROP TYPE IF EXISTS "MatchType", "TriggerType";'
 ```
 
-**Approval needed to start:** ❌
+**Cost tracking methodology:**
+- Every inbound message is routed through agent/router.py
+- route_tier is logged per message: "flow" | "keyword" | "llm"
+- When tier != llm, tokens_saved_estimate += 3000 (avg tokens for a gpt-4o-mini call with full system prompt + conversation history)
+- Cost estimate: ~$3/1M tokens for gpt-4o-mini = ~$0.009 saved per skipped call
+- Stats available via router.get_stats() and logged as router.stats event
 
+**Verification performed (2026-04-16):**
+- Pre-migration backup: ~/backups/pre-phase2-20260416-105539.dump (84K)
+- Migration applied cleanly, prisma validate passed
+- 12 KeywordRules seeded, 1 ConversationFlow seeded
+- Test A: "STOP" → webhook opt-out handler (pre-router, no LLM) ✓
+- Test B: "hi" → kr_greeting keyword rule (no LLM) ✓
+- Test C: "kitne ka logo banate ho" → kr_pricing → pass_to_llm → LLM replied with correct ₹2999 pricing ✓
+- Test D: "What are your services?" → kr_services → static_reply (no LLM) ✓
+- Tier distribution from 4 tests: keyword=4 (100%), llm=0 (0%), tokens_saved=9000
+- Test data cleaned up after verification
+
+**User-requested tweaks (all applied):**
+1. call_request split: EXACT for short phrases (priority 15) + CONTAINS for longer (priority 16)
+2. payment response is generic — no UPI/bank/QR details
+3. pricing_inquiry rule added with pass_to_llm action
+
+**Approval needed for Phase 3:** pending explicit user sign-off
 ---
 
 ## Phase 3 — Structured tools + lead qualification (no DB migration)
