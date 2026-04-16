@@ -38,6 +38,8 @@ from modules.logging_config import (
 from modules.webhook_models import WhatsAppWebhookPayload
 from modules.db import init_pool, close_pool, is_lead_opted_out, set_lead_opted_out, audit_log
 from agent.router import route_message, record_route, RouteResult
+from agent.security.rate_limit import init_redis, close_redis, is_inbound_allowed, is_ip_allowed
+from agent.security.input_filter import sanitize_input, is_message_allowed
 
 from agent.core import process_message, process_owner_command
 from agent.conversation import load_conversation, get_summary, mark_handoff, add_image, add_message
@@ -103,12 +105,14 @@ scheduler = AsyncIOScheduler()
 @app.on_event("startup")
 async def startup_event():
     await init_pool()
+    await init_redis()
     scheduler.start()
     log.info("scheduler.started")
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
+    await close_redis()
     await close_pool()
     scheduler.shutdown()
 
@@ -232,6 +236,12 @@ async def receive_message(request: Request):
     if not _verify_webhook_signature(raw_body, signature_header):
         return Response(status_code=401)
 
+    # Phase 5: Per-IP rate limiting on webhook endpoint
+    client_ip = request.client.host if request.client else "unknown"
+    if not await is_ip_allowed(client_ip):
+        log.warning("webhook.ip_rate_limited", ip=client_ip)
+        return Response(status_code=429)
+
     # Parse + validate against Pydantic model. On schema failure: log + 200
     # (do not make Meta retry on our parsing bug).
     try:
@@ -320,6 +330,11 @@ async def receive_message(request: Request):
                     continue
             except Exception:
                 pass
+
+            # Phase 5: Per-phone inbound rate limiting
+            if not await is_inbound_allowed(phone):
+                log.warning("webhook.phone_rate_limited", phone_hash=hash_phone(phone))
+                continue  # silently drop — don't alert user
 
             # Legacy downstream code expects raw-dict messages. Pass model_dump.
             message_dict = message.model_dump(by_alias=True, exclude_none=True)
@@ -521,6 +536,15 @@ async def handle_client_message(phone: str, message: dict, msg_type: str):
 
         if not text and not image_data:
             return
+
+        # Phase 5: Input sanitization + length check
+        if text:
+            allowed, reject_reason = is_message_allowed(text)
+            if not allowed:
+                log.warning("client.message_rejected", reason=reject_reason, phone_hash=hash_phone(phone))
+                await send_text(phone, "Message too long! Please send a shorter message. 🙏")
+                return
+            text, _input_flags = sanitize_input(text)
 
         # Broadcast incoming client message to dashboard
         await ws_manager.broadcast({

@@ -11,6 +11,8 @@ from dotenv import load_dotenv
 from agent.telegram_alert import send_telegram_alert
 
 from modules.logging_config import get_logger
+from agent.security.output_filter import filter_output
+from agent.security.rate_limit import is_outbound_allowed
 
 log = get_logger("saransh.agent.whatsapp")
 
@@ -30,11 +32,21 @@ HEADERS = {
 
 async def send_text(to: str, message: str):
     """Send a plain text message to a WhatsApp number."""
+    # Phase 5: Output filtering — scan for leaked secrets/PII before sending
+    filtered_message, was_blocked = await filter_output(message, to)
+    if was_blocked:
+        log.warning("whatsapp.output_blocked", phone_hash=to[-4:])
+
+    # Phase 5: Outbound rate limiting
+    if not await is_outbound_allowed(to):
+        log.warning("whatsapp.outbound_rate_limited", phone_hash=to[-4:])
+        return {"error": "outbound_rate_limited"}
+
     payload = {
         "messaging_product": "whatsapp",
         "to": to,
         "type": "text",
-        "text": {"body": message}
+        "text": {"body": filtered_message}
     }
     async with httpx.AsyncClient() as client:
         response = await client.post(API_URL, json=payload, headers=HEADERS)

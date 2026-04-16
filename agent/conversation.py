@@ -22,6 +22,7 @@ def _now_ist() -> str:
 from pathlib import Path
 
 from modules.logging_config import get_logger
+from modules.secrets_manager import encrypt_conversation_data, decrypt_conversation_data
 
 log = get_logger("saransh.agent.conversation")
 
@@ -60,6 +61,7 @@ def load_conversation(phone: str) -> dict:
     if path.exists():
         with open(path, "r", encoding="utf-8") as f:
             conv = json.load(f)
+        conv = decrypt_conversation_data(conv)
         # Auto-reset if last message was more than 3 days ago
         last = conv.get("last_updated")
         if last and conv.get("messages"):
@@ -88,6 +90,7 @@ def load_conversation(phone: str) -> dict:
 
 def save_conversation(phone: str, data: dict):
     data["last_updated"] = _now_ist()
+    data = encrypt_conversation_data(data)
     path = _get_path(phone)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
