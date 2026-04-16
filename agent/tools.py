@@ -359,28 +359,61 @@ async def _exec_capture_lead(args: dict, phone: str) -> str:
         "message": f"Lead info saved. Score: {score}/100 ({bucket})"
     }
 
-    # Auto-escalate if READY_FOR_CALL
+    # Auto-escalate if READY_FOR_CALL — server-side, not relying on LLM
     if bucket == "READY_FOR_CALL":
-        result["auto_escalation"] = "Score >= 86 — triggering automatic escalation to Saransh sir"
+        result["auto_escalation"] = "Score >= 86 — automatic Telegram escalation triggered"
         log.info("tools.auto_escalate", score=score, phone_len=len(phone))
+        try:
+            escalation_result = await _exec_escalate_to_human(
+                {"reason": f"Auto-escalation: lead score {score}/100 (READY_FOR_CALL)", "urgency": "high"},
+                phone,
+            )
+            import json as _json
+            esc_data = _json.loads(escalation_result)
+            result["telegram_sent"] = esc_data.get("telegram_sent", False)
+            log.info("tools.auto_escalate_done", telegram_sent=result["telegram_sent"])
+        except Exception as e:
+            log.error("tools.auto_escalate_failed", error=str(e))
 
     return json.dumps(result)
 
 
 async def _exec_escalate_to_human(args: dict, phone: str) -> str:
-    """Trigger escalation alert."""
-    log.info("tools.escalate", reason=args.get("reason"), urgency=args.get("urgency"), phone_len=len(phone))
+    """Trigger escalation alert via Telegram + AuditLog."""
+    reason = args.get("reason", "No reason provided")
+    urgency = args.get("urgency", "medium")
+    log.info("tools.escalate", reason=reason, urgency=urgency, phone_len=len(phone))
 
+    # Write audit log
     try:
         from modules.db import audit_log
         await audit_log("bot", "escalate_to_human", "Lead", entity_id=phone,
-                        after_json={"reason": args.get("reason"), "urgency": args.get("urgency")})
+                        after_json={"reason": reason, "urgency": urgency})
     except Exception:
         pass
 
+    # Send Telegram alert using existing infrastructure
+    telegram_ok = False
+    try:
+        from agent.conversation import load_conversation, get_summary
+        summary = get_summary(phone)
+        from agent.whatsapp import send_escalation_alert
+        await send_escalation_alert(
+            phone=phone,
+            client_question=reason,
+            service=summary.get("service", "unknown"),
+            budget=str(summary.get("details", {}).get("budget", "N/A")),
+            timeline=str(summary.get("details", {}).get("timeline", "N/A")),
+        )
+        telegram_ok = True
+        log.info("tools.escalate_telegram_sent", phone_len=len(phone), urgency=urgency)
+    except Exception as e:
+        log.error("tools.escalate_telegram_failed", error=str(e), phone_len=len(phone))
+
     return json.dumps({
         "status": "escalated",
-        "message": f"Escalation triggered ({args.get('urgency')} urgency). Saransh sir will be notified."
+        "telegram_sent": telegram_ok,
+        "message": f"Escalation triggered ({urgency} urgency). Saransh sir has been notified via Telegram."
     })
 
 
