@@ -1109,6 +1109,18 @@ async def delete_kb_entry(entry_id: int, request: Request, _auth=Depends(require
     return {"status": "deleted"}
 
 
+
+
+@app.post("/api/rag/sync-kb")
+async def sync_kb_to_rag(_auth=Depends(require_auth)):
+    """Re-ingest all KB entries from settings.json into RAG (KnowledgeDocument + KnowledgeChunk). Idempotent."""
+    try:
+        from agent.rag.ingestion import ingest_documents_from_settings
+        result = await ingest_documents_from_settings()
+        return {"ok": True, "result": result or {}}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
 # ============================================================
 # WHATSAPP ACTIONS API
 # ============================================================
