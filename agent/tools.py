@@ -310,7 +310,7 @@ async def _exec_capture_lead(args: dict, phone: str) -> str:
                 now = _utcnow()
                 # Update Lead row if it exists
                 lead_row = await conn.fetchrow(
-                    'SELECT id FROM "Lead" WHERE "waPhone" = $1', phone
+                    'SELECT id FROM "Lead" WHERE "waPhone" = $1 AND "deletedAt" IS NULL', phone
                 )
                 if lead_row:
                     lead_id = lead_row["id"]

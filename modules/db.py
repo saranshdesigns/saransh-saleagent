@@ -106,9 +106,16 @@ async def upsert_conversation(
         details_json = _json.dumps(collected_details) if collected_details else None
 
         async with _pool.acquire() as conn:
+            # Phase 1.1: look up matching live Lead so we can populate BotConversation.leadId
+            lead_row = await conn.fetchrow(
+                'SELECT id FROM "Lead" WHERE "waPhone" = $1 AND "deletedAt" IS NULL',
+                wa_phone,
+            )
+            matched_lead_id = lead_row["id"] if lead_row else None
+
             # Check for existing active conversation for this phone
             row = await conn.fetchrow(
-                'SELECT id FROM "BotConversation" WHERE "waPhone" = $1 ORDER BY "createdAt" DESC LIMIT 1',
+                'SELECT id, "leadId" FROM "BotConversation" WHERE "waPhone" = $1 ORDER BY "createdAt" DESC LIMIT 1',
                 wa_phone,
             )
             if row:
@@ -121,11 +128,12 @@ async def upsert_conversation(
                             "seriousnessScore" = COALESCE($3, "seriousnessScore"),
                             "agreedPrice" = COALESCE($4, "agreedPrice"),
                             "handoffTriggered" = $5,
+                            "leadId" = COALESCE("leadId", $8),
                             {update_ts} = $6,
                             "updatedAt" = $6
                         WHERE id = $7''',
                     pg_stage, details_json, seriousness_score,
-                    agreed_price, handoff_triggered, now, conv_id,
+                    agreed_price, handoff_triggered, now, conv_id, matched_lead_id,
                 )
                 return conv_id
             else:
@@ -134,11 +142,11 @@ async def upsert_conversation(
                 outbound_at = now if direction == "OUTBOUND" else None
                 await conn.execute(
                     '''INSERT INTO "BotConversation"
-                        (id, "waPhone", stage, "collectedDetails",
+                        (id, "waPhone", "leadId", stage, "collectedDetails",
                          "seriousnessScore", "agreedPrice", "handoffTriggered",
                          "lastInboundAt", "lastOutboundAt", "createdAt", "updatedAt")
-                        VALUES ($1, $2, $3::\"BotStage\", $4::jsonb, $5, $6, $7, $8, $9, $10, $10)''',
-                    conv_id, wa_phone, pg_stage, details_json,
+                        VALUES ($1, $2, $3, $4::\"BotStage\", $5::jsonb, $6, $7, $8, $9, $10, $11, $11)''',
+                    conv_id, wa_phone, matched_lead_id, pg_stage, details_json,
                     seriousness_score, agreed_price, handoff_triggered,
                     inbound_at, outbound_at, now,
                 )
@@ -216,7 +224,7 @@ async def set_lead_opted_out(wa_phone: str, opted_out: bool = True) -> bool:
     try:
         async with _pool.acquire() as conn:
             result = await conn.execute(
-                'UPDATE "Lead" SET "optedOut" = $1, "updatedAt" = $2 WHERE "waPhone" = $3',
+                'UPDATE "Lead" SET "optedOut" = $1, "updatedAt" = $2 WHERE "waPhone" = $3 AND "deletedAt" IS NULL',
                 opted_out, _utcnow(), wa_phone,
             )
             updated = int(result.split()[-1]) > 0
@@ -235,7 +243,7 @@ async def is_lead_opted_out(wa_phone: str) -> bool:
     try:
         async with _pool.acquire() as conn:
             row = await conn.fetchrow(
-                'SELECT "optedOut" FROM "Lead" WHERE "waPhone" = $1',
+                'SELECT "optedOut" FROM "Lead" WHERE "waPhone" = $1 AND "deletedAt" IS NULL',
                 wa_phone,
             )
             return bool(row and row["optedOut"])
