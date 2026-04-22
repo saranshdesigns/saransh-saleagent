@@ -129,11 +129,12 @@ async def upsert_conversation(
                             "agreedPrice" = COALESCE($4, "agreedPrice"),
                             "handoffTriggered" = $5,
                             "leadId" = COALESCE("leadId", $8),
+                            "firstInboundAt" = CASE WHEN $9::text = 'INBOUND' THEN COALESCE("firstInboundAt", $6) ELSE "firstInboundAt" END,
                             {update_ts} = $6,
                             "updatedAt" = $6
                         WHERE id = $7''',
                     pg_stage, details_json, seriousness_score,
-                    agreed_price, handoff_triggered, now, conv_id, matched_lead_id,
+                    agreed_price, handoff_triggered, now, conv_id, matched_lead_id, direction,
                 )
                 return conv_id
             else:
@@ -144,11 +145,11 @@ async def upsert_conversation(
                     '''INSERT INTO "BotConversation"
                         (id, "waPhone", "leadId", stage, "collectedDetails",
                          "seriousnessScore", "agreedPrice", "handoffTriggered",
-                         "lastInboundAt", "lastOutboundAt", "createdAt", "updatedAt")
-                        VALUES ($1, $2, $3, $4::\"BotStage\", $5::jsonb, $6, $7, $8, $9, $10, $11, $11)''',
+                         "lastInboundAt", "lastOutboundAt", "firstInboundAt", "createdAt", "updatedAt")
+                        VALUES ($1, $2, $3, $4::\"BotStage\", $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $12)''',
                     conv_id, wa_phone, matched_lead_id, pg_stage, details_json,
                     seriousness_score, agreed_price, handoff_triggered,
-                    inbound_at, outbound_at, now,
+                    inbound_at, outbound_at, inbound_at, now,
                 )
                 return conv_id
     except Exception as e:
