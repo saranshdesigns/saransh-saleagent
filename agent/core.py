@@ -62,7 +62,13 @@ DEFAULT_FALLBACK_MESSAGE = "I appreciate your message! Let me connect you with S
 DEFAULT_CALL_REQUEST_MESSAGE = "Sure, I will arrange a call for you. Please wait, I'll coordinate with Saransh Sir and you will receive a call shortly."
 DEFAULT_HANDOFF_MESSAGE = "Hi! Your enquiry has already been noted and Saransh Sir will be in touch with you shortly. Please wait for his message!"
 
-# Track which fields have logged their resolved source once per process (info-level, not per request).
+# Chunk 2: LLM model + sampling + tool budget defaults — preserve current behaviour exactly.
+DEFAULT_REPLY_MODEL = "gpt-4o-mini"
+DEFAULT_VISION_MODEL = "gpt-4o"
+DEFAULT_REPLY_TEMPERATURE = 0.7
+DEFAULT_TOOL_CALL_CAP = 3
+
+# Track which (field, source) pairs have logged once per process (info-level, not per request).
 _LOGGED: set = set()
 
 
@@ -83,7 +89,8 @@ async def _load_bot_config() -> dict:
         async with _pool.acquire() as conn:
             row = await conn.fetchrow(
                 'SELECT "masterPrompt", "welcomeMessage", "fallbackMessage", '
-                '"callRequestMessage", "handoffMessage", "botName", "businessName" '
+                '"callRequestMessage", "handoffMessage", "botName", "businessName", '
+                '"llmReplyModel", "llmVisionModel", "llmReplyTemperature", "toolCallCap" '
                 'FROM "BotConfig" WHERE id = $1',
                 "singleton",
             )
@@ -106,7 +113,7 @@ async def _load_master_prompt() -> str:
 
 def _resolve_field(cfg: dict, field: str, default: str) -> str:
     """Pick DB value if non-null/non-empty, else fall back to the existing literal default.
-    Logs the source once per (process, field)."""
+    Logs the source once per (process, field, source)."""
     raw = cfg.get(field) if cfg else None
     if isinstance(raw, str) and raw.strip():
         source = "db"
@@ -114,9 +121,28 @@ def _resolve_field(cfg: dict, field: str, default: str) -> str:
     else:
         source = "default_fallback"
         value = default
-    if field not in _LOGGED:
-        _LOGGED.add(field)
+    key = (field, source)
+    if key not in _LOGGED:
+        _LOGGED.add(key)
         log.info("bot_config.loaded", source=source, field=field)
+    return value
+
+
+def _resolve_typed_field(cfg: dict, field: str, default, log_field: str):
+    """Like _resolve_field but for non-string values (numeric, model name strings).
+    Accepts DB value if not None; numeric defaults preserve int/float types.
+    Logs the source once per (process, field, source)."""
+    raw = cfg.get(field) if cfg else None
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        source = "default_fallback"
+        value = default
+    else:
+        source = "db"
+        value = raw
+    key = (field, source)
+    if key not in _LOGGED:
+        _LOGGED.add(key)
+        log.info("bot_config.loaded", source=source, field=log_field)
     return value
 
 
@@ -139,6 +165,35 @@ async def _get_handoff_message() -> str:
     cfg = await _load_bot_config()
     return _resolve_field(cfg, "handoffMessage", DEFAULT_HANDOFF_MESSAGE)
 
+
+# Chunk 2 accessors — LLM model + sampling + tool budget. NULL columns => DEFAULT_* fallbacks
+# preserving today's hardcoded behaviour.
+
+async def _get_reply_model() -> str:
+    cfg = await _load_bot_config()
+    return _resolve_typed_field(cfg, "llmReplyModel", DEFAULT_REPLY_MODEL, "llm_reply_model")
+
+
+async def _get_vision_model() -> str:
+    cfg = await _load_bot_config()
+    return _resolve_typed_field(cfg, "llmVisionModel", DEFAULT_VISION_MODEL, "llm_vision_model")
+
+
+async def _get_reply_temperature() -> float:
+    cfg = await _load_bot_config()
+    return _resolve_typed_field(cfg, "llmReplyTemperature", DEFAULT_REPLY_TEMPERATURE, "llm_reply_temperature")
+
+
+async def _get_tool_call_cap() -> int:
+    cfg = await _load_bot_config()
+    return _resolve_typed_field(cfg, "toolCallCap", DEFAULT_TOOL_CALL_CAP, "tool_call_cap")
+
+
+def _get_reply_model_sync() -> str:
+    """Sync read for non-async call sites — uses cached BotConfig if warm, else default.
+    Behaviour-preserving: falls back to DEFAULT_REPLY_MODEL on cold cache, matching pre-Chunk-2 hardcode."""
+    cfg = _BOT_CONFIG_CACHE["value"] or {}
+    return _resolve_typed_field(cfg, "llmReplyModel", DEFAULT_REPLY_MODEL, "llm_reply_model")
 
 
 async def build_messages_for_openai(phone: str, new_message: str, image_data: str = None) -> list:
@@ -265,7 +320,7 @@ Is First Message: {len(conv['messages']) <= 1}{projects_context}
 def detect_intent(message: str) -> dict:
     """Quick intent detection without full conversation context. Token-efficient."""
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=_get_reply_model_sync(),
         messages=[
             {
                 "role": "system",
@@ -353,7 +408,9 @@ async def process_message(phone: str, message: str, image_data: str = None, wami
             _log.warning("core.rag_error", error=str(e))
 
     # Choose model
-    model = "gpt-4o" if image_data else "gpt-4o-mini"
+    model = await _get_vision_model() if image_data else await _get_reply_model()
+    reply_temperature = await _get_reply_temperature()
+    tool_call_cap = await _get_tool_call_cap()
 
     # Phase 3: call with tools (strict=true), parallel_tool_calls=false
     response = client.chat.completions.create(
@@ -362,7 +419,7 @@ async def process_message(phone: str, message: str, image_data: str = None, wami
         tools=TOOLS,
         parallel_tool_calls=False,
         max_tokens=600,
-        temperature=0.7,
+        temperature=reply_temperature,
     )
 
     msg = response.choices[0].message
@@ -374,7 +431,7 @@ async def process_message(phone: str, message: str, image_data: str = None, wami
     # Handle tool calls — execute and feed results back (max 3 rounds)
     elif msg.tool_calls:
         messages.append(msg)
-        for _round in range(3):
+        for _round in range(tool_call_cap):
             for tool_call in msg.tool_calls:
                 fn_name = tool_call.function.name
                 try:
@@ -395,7 +452,7 @@ async def process_message(phone: str, message: str, image_data: str = None, wami
                 tools=TOOLS,
                 parallel_tool_calls=False,
                 max_tokens=600,
-                temperature=0.7,
+                temperature=reply_temperature,
             )
             msg = response.choices[0].message
             if not msg.tool_calls:
@@ -476,7 +533,7 @@ def _extract_and_store_details(phone: str):
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=_get_reply_model_sync(),
             messages=[
                 {
                     "role": "system",
@@ -558,7 +615,7 @@ def _handle_price_update(command: str) -> str:
     pricing = load_pricing()
 
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=_get_reply_model_sync(),
         messages=[
             {
                 "role": "system",
