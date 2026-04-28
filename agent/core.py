@@ -48,31 +48,96 @@ def load_settings() -> dict:
         return json.load(f)
 
 
-# Phase 1.4b.1 - master prompt loaded from saransh_dashboard.BotConfig (DB, not hardcoded).
-# 5-second in-process cache; changes from dashboard propagate within ~5s.
-_MASTER_PROMPT_CACHE = {"value": None, "fetched_at": 0.0}
-_MASTER_PROMPT_TTL = 5.0
-_FALLBACK_PROMPT = "You are a helpful business assistant. Do not make up information."
+# Phase 1.4b.1 / v1.3.3 (Chunk 1) - bot config loaded from saransh_dashboard.BotConfig (DB, not hardcoded).
+# 5-second in-process cache for the full singleton row; changes from dashboard propagate within ~5s.
+# The full row is cached so message templates (welcome/fallback/call-request/handoff) share one DB hit.
+_BOT_CONFIG_CACHE = {"value": None, "fetched_at": 0.0}
+_BOT_CONFIG_TTL = 5.0
 
-async def _load_master_prompt() -> str:
+# Cold-boot defaults — preserved verbatim from previous hardcoded literals so behaviour
+# is unchanged when DB is unreachable or BotConfig columns are NULL.
+_FALLBACK_PROMPT = "You are a helpful business assistant. Do not make up information."
+DEFAULT_WELCOME_MESSAGE = "Welcome to SaranshDesigns. How can I assist you today?"
+DEFAULT_FALLBACK_MESSAGE = "I appreciate your message! Let me connect you with Saransh Sharma sir for this."
+DEFAULT_CALL_REQUEST_MESSAGE = "Sure, I will arrange a call for you. Please wait, I'll coordinate with Saransh Sir and you will receive a call shortly."
+DEFAULT_HANDOFF_MESSAGE = "Hi! Your enquiry has already been noted and Saransh Sir will be in touch with you shortly. Please wait for his message!"
+
+# Track which fields have logged their resolved source once per process (info-level, not per request).
+_LOGGED: set = set()
+
+
+async def _load_bot_config() -> dict:
+    """Fetch the BotConfig singleton row with a 5s TTL cache. Returns a dict (possibly empty on failure).
+
+    Defensive: any column may be NULL — callers must apply their own DEFAULT_* fallback.
+    """
     now = time.monotonic()
-    if _MASTER_PROMPT_CACHE["value"] is not None and (now - _MASTER_PROMPT_CACHE["fetched_at"]) < _MASTER_PROMPT_TTL:
-        return _MASTER_PROMPT_CACHE["value"]
+    cached = _BOT_CONFIG_CACHE["value"]
+    if cached is not None and (now - _BOT_CONFIG_CACHE["fetched_at"]) < _BOT_CONFIG_TTL:
+        return cached
     try:
         from modules.db import _pool, _pool_ok
         if not _pool_ok():
-            log.warning("prompt.pool_unavailable")
-            return _MASTER_PROMPT_CACHE["value"] or _FALLBACK_PROMPT
+            log.warning("bot_config.pool_unavailable")
+            return cached or {}
         async with _pool.acquire() as conn:
-            row = await conn.fetchrow('SELECT "masterPrompt" FROM "BotConfig" WHERE id = $1', "singleton")
-        value = (row["masterPrompt"] if row else None) or _FALLBACK_PROMPT
-        _MASTER_PROMPT_CACHE["value"] = value
-        _MASTER_PROMPT_CACHE["fetched_at"] = now
-        log.info("prompt.loaded", length=len(value))
+            row = await conn.fetchrow(
+                'SELECT "masterPrompt", "welcomeMessage", "fallbackMessage", '
+                '"callRequestMessage", "handoffMessage", "botName", "businessName" '
+                'FROM "BotConfig" WHERE id = $1',
+                "singleton",
+            )
+        value = dict(row) if row else {}
+        _BOT_CONFIG_CACHE["value"] = value
+        _BOT_CONFIG_CACHE["fetched_at"] = now
+        log.info("bot_config.loaded", keys=sorted(value.keys()))
         return value
     except Exception as e:
-        log.warning("prompt.load_failed", error=str(e))
-        return _MASTER_PROMPT_CACHE["value"] or _FALLBACK_PROMPT
+        log.warning("bot_config.load_failed", error=str(e))
+        return cached or {}
+
+
+async def _load_master_prompt() -> str:
+    """Backwards-compatible wrapper — returns just the masterPrompt string for existing call sites."""
+    cfg = await _load_bot_config()
+    value = (cfg.get("masterPrompt") if cfg else None) or _FALLBACK_PROMPT
+    return value
+
+
+def _resolve_field(cfg: dict, field: str, default: str) -> str:
+    """Pick DB value if non-null/non-empty, else fall back to the existing literal default.
+    Logs the source once per (process, field)."""
+    raw = cfg.get(field) if cfg else None
+    if isinstance(raw, str) and raw.strip():
+        source = "db"
+        value = raw
+    else:
+        source = "default_fallback"
+        value = default
+    if field not in _LOGGED:
+        _LOGGED.add(field)
+        log.info("bot_config.loaded", source=source, field=field)
+    return value
+
+
+async def _get_welcome_message() -> str:
+    cfg = await _load_bot_config()
+    return _resolve_field(cfg, "welcomeMessage", DEFAULT_WELCOME_MESSAGE)
+
+
+async def _get_fallback_message() -> str:
+    cfg = await _load_bot_config()
+    return _resolve_field(cfg, "fallbackMessage", DEFAULT_FALLBACK_MESSAGE)
+
+
+async def _get_call_request_message() -> str:
+    cfg = await _load_bot_config()
+    return _resolve_field(cfg, "callRequestMessage", DEFAULT_CALL_REQUEST_MESSAGE)
+
+
+async def _get_handoff_message() -> str:
+    cfg = await _load_bot_config()
+    return _resolve_field(cfg, "handoffMessage", DEFAULT_HANDOFF_MESSAGE)
 
 
 
@@ -305,7 +370,7 @@ async def process_message(phone: str, message: str, image_data: str = None, wami
     # Handle refusal (OpenAI safety)
     if hasattr(msg, "refusal") and msg.refusal:
         _log.warning("core.llm_refusal", refusal=msg.refusal)
-        reply = "I appreciate your message! Let me connect you with Saransh Sharma sir for this."
+        reply = await _get_fallback_message()
     # Handle tool calls — execute and feed results back (max 3 rounds)
     elif msg.tool_calls:
         messages.append(msg)

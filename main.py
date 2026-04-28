@@ -484,7 +484,8 @@ async def handle_client_message(phone: str, message: dict, msg_type: str):
                 _last_time = datetime.datetime.fromisoformat(_last_updated)
                 _hours_elapsed = (datetime.datetime.now() - _last_time).total_seconds() / 3600
                 if _hours_elapsed < 24:
-                    await send_text(phone, "Hi! Your enquiry has already been noted and Saransh Sir will be in touch with you shortly. Please wait for his message!")
+                    from agent.core import _get_handoff_message
+                    await send_text(phone, await _get_handoff_message())
                     return
                 else:
                     # Fresh start after 24h post-handoff
@@ -563,9 +564,9 @@ async def handle_client_message(phone: str, message: dict, msg_type: str):
 
         # Tier: greeting (keyword rule)
         if route.action == "greeting" and _current_stage == "new":
-            from agent.core import _get_ist_greeting
+            from agent.core import _get_ist_greeting, _get_welcome_message
             _greet = _get_ist_greeting()
-            msg1 = f"{_greet} Welcome to SaranshDesigns. How can I assist you today?"
+            msg1 = f"{_greet} {await _get_welcome_message()}"
             msg2 = "Are you looking for logo design, packaging design, or website design?"
             await send_text(phone, msg1)
             await asyncio.sleep(4)
@@ -580,7 +581,8 @@ async def handle_client_message(phone: str, message: dict, msg_type: str):
 
         # Tier: call_request (keyword rule)
         if route.action == "call_request":
-            reply = "Sure, I will arrange a call for you. Please wait, I'll coordinate with Saransh Sir and you will receive a call shortly."
+            from agent.core import _get_call_request_message
+            reply = await _get_call_request_message()
             await send_text(phone, reply)
             add_message(phone, "user", text, wamid=incoming_wamid)
             add_message(phone, "assistant", reply)
