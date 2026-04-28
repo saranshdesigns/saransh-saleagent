@@ -68,6 +68,20 @@ DEFAULT_VISION_MODEL = "gpt-4o"
 DEFAULT_REPLY_TEMPERATURE = 0.7
 DEFAULT_TOOL_CALL_CAP = 3
 
+# Chunk 3: persona / tone / names / language / hot-lead defaults.
+# Empty strings for free-text additive fields => no-op when blank, master prompt is unchanged.
+DEFAULT_PERSONA_TRAITS = ""
+DEFAULT_TONE_EXAMPLES = ""
+DEFAULT_BOT_NAME = "SaranshDesigns Assistant"
+DEFAULT_BUSINESS_NAME = "SaranshDesigns"
+# TODO Chunk 3.5: wire off-hours message when workingHoursJson is wired
+DEFAULT_OFF_HOURS_MESSAGE = ""
+# BotConfig field is on a 0-10 scale per v1.3 spec; bot scoring is on 0-100.
+# Bridge by multiplying the BotConfig value by 10 in the accessor — preserves current
+# scoring math, lets dashboard expose a friendlier 0-10 slider.
+DEFAULT_HOT_LEAD_THRESHOLD = 7
+DEFAULT_LANGUAGE_MODE = "ENGLISH_ONLY"
+
 # Track which (field, source) pairs have logged once per process (info-level, not per request).
 _LOGGED: set = set()
 
@@ -90,7 +104,9 @@ async def _load_bot_config() -> dict:
             row = await conn.fetchrow(
                 'SELECT "masterPrompt", "welcomeMessage", "fallbackMessage", '
                 '"callRequestMessage", "handoffMessage", "botName", "businessName", '
-                '"llmReplyModel", "llmVisionModel", "llmReplyTemperature", "toolCallCap" '
+                '"llmReplyModel", "llmVisionModel", "llmReplyTemperature", "toolCallCap", '
+                '"personaTraits", "toneExamples", "offHoursMessage", '
+                '"hotLeadThreshold", "languageMode" '
                 'FROM "BotConfig" WHERE id = $1',
                 "singleton",
             )
@@ -189,6 +205,63 @@ async def _get_tool_call_cap() -> int:
     return _resolve_typed_field(cfg, "toolCallCap", DEFAULT_TOOL_CALL_CAP, "tool_call_cap")
 
 
+# Chunk 3 accessors — persona / tone / names / language / hot-lead.
+# Each returns the configured DB value if non-null/non-empty, otherwise the DEFAULT_*
+# preserves today's hardcoded behaviour. Free-text fields default to empty strings —
+# callers treat empty as "no extra context to inject" and the master prompt is unchanged.
+
+async def _get_persona_traits() -> str:
+    cfg = await _load_bot_config()
+    return _resolve_field(cfg, "personaTraits", DEFAULT_PERSONA_TRAITS)
+
+
+async def _get_tone_examples() -> str:
+    cfg = await _load_bot_config()
+    return _resolve_field(cfg, "toneExamples", DEFAULT_TONE_EXAMPLES)
+
+
+async def _get_bot_name() -> str:
+    cfg = await _load_bot_config()
+    return _resolve_field(cfg, "botName", DEFAULT_BOT_NAME)
+
+
+async def _get_business_name() -> str:
+    cfg = await _load_bot_config()
+    return _resolve_field(cfg, "businessName", DEFAULT_BUSINESS_NAME)
+
+
+# TODO Chunk 3.5: wire off-hours message when workingHoursJson is wired.
+# Accessor exposed now so a later chunk can use it without touching this module again.
+async def _get_off_hours_message() -> str:
+    cfg = await _load_bot_config()
+    return _resolve_field(cfg, "offHoursMessage", DEFAULT_OFF_HOURS_MESSAGE)
+
+
+async def _get_hot_lead_threshold() -> int:
+    """Hot-lead trigger threshold on the bot's 0-100 scale.
+
+    BotConfig.hotLeadThreshold is on a 0-10 scale (v1.3 spec). We multiply by 10
+    here so existing seriousness arithmetic (which lives on 0-100) stays untouched.
+    Default 7 → 70/100, matching the audit's example threshold.
+    """
+    cfg = await _load_bot_config()
+    raw = _resolve_typed_field(cfg, "hotLeadThreshold", DEFAULT_HOT_LEAD_THRESHOLD, "hot_lead_threshold")
+    try:
+        return int(raw) * 10
+    except (TypeError, ValueError):
+        return DEFAULT_HOT_LEAD_THRESHOLD * 10
+
+
+async def _get_language_mode() -> str:
+    cfg = await _load_bot_config()
+    value = _resolve_typed_field(cfg, "languageMode", DEFAULT_LANGUAGE_MODE, "language_mode")
+    # Defensive: enum value must be one of the three known modes; anything else
+    # falls back to the default so a typo in the DB cannot silently break replies.
+    if value not in ("ENGLISH_ONLY", "AUTO_MIRROR", "CUSTOMER_LANGUAGE_ONLY"):
+        return DEFAULT_LANGUAGE_MODE
+    return value
+
+
 def _get_reply_model_sync() -> str:
     """Sync read for non-async call sites — uses cached BotConfig if warm, else default.
     Behaviour-preserving: falls back to DEFAULT_REPLY_MODEL on cold cache, matching pre-Chunk-2 hardcode."""
@@ -264,7 +337,36 @@ Website Ecommerce (Shopify): ₹{pricing['website']['ecommerce']['price_min']}�
         kb_lines = [f"Q: {e['question']}\nA: {e['answer']}" for e in knowledge_base]
         kb_ctx = "\n## KNOWLEDGE BASE — FAQ (Use these answers when clients ask similar questions)\n" + "\n\n".join(kb_lines) + "\n"
 
-    system_with_context = (await _load_master_prompt()) + pricing_context + custom_ctx + kb_ctx + f"""
+    # Chunk 3: load master prompt first, then layer dashboard-controlled persona /
+    # tone / names / language directives BEFORE pricing / custom_ctx / KB context.
+    # Each block is only appended when it actually has content — when every field is
+    # NULL or default, master_prompt is byte-for-byte what it was pre-Chunk-3.
+    master_prompt = await _load_master_prompt()
+    bot_name = await _get_bot_name()
+    business_name = await _get_business_name()
+    persona = await _get_persona_traits()
+    tone = await _get_tone_examples()
+    lang_mode = await _get_language_mode()
+
+    prompt_extras = []
+    if bot_name and bot_name != DEFAULT_BOT_NAME:
+        prompt_extras.append(f"YOUR NAME: {bot_name}")
+    if business_name and business_name != DEFAULT_BUSINESS_NAME:
+        prompt_extras.append(f"BUSINESS: {business_name}")
+    if persona:
+        prompt_extras.append(f"PERSONA TRAITS:\n{persona}")
+    if tone:
+        prompt_extras.append(f"TONE EXAMPLES:\n{tone}")
+    if lang_mode == "ENGLISH_ONLY":
+        prompt_extras.append("LANGUAGE: Always reply in English regardless of the customer's language.")
+    elif lang_mode == "AUTO_MIRROR":
+        prompt_extras.append("LANGUAGE: Detect the customer's language and reply in the same language. Default to English when unclear.")
+    elif lang_mode == "CUSTOMER_LANGUAGE_ONLY":
+        prompt_extras.append("LANGUAGE: Reply in the customer's language only. Never switch to English unless they do.")
+    if prompt_extras:
+        master_prompt = master_prompt + "\n\n" + "\n\n".join(prompt_extras)
+
+    system_with_context = master_prompt + pricing_context + custom_ctx + kb_ctx + f"""
 ## CURRENT TIME (IST — India Standard Time)
 Time: {now.strftime('%I:%M %p')} IST | Period: {time_period}
 → If "Is First Message" is True below, your reply MUST start with "{time_greeting}!"
@@ -473,7 +575,7 @@ async def process_message(phone: str, message: str, image_data: str = None, wami
     add_message(phone, "assistant", reply)
 
     # Auto-detect stage changes from reply content
-    _update_stage_from_reply(phone, reply, message)
+    await _update_stage_from_reply(phone, reply, message)
 
     # Extract and store structured client details silently
     _extract_and_store_details(phone)
@@ -481,8 +583,12 @@ async def process_message(phone: str, message: str, image_data: str = None, wami
     return reply
 
 
-def _update_stage_from_reply(phone: str, reply: str, user_msg: str):
-    """Auto-detect and update conversation stage based on reply content."""
+async def _update_stage_from_reply(phone: str, reply: str, user_msg: str):
+    """Auto-detect and update conversation stage based on reply content.
+
+    Chunk 3: also fires a hot-lead alert to Saransh (idempotent, once per
+    conversation) when seriousness crosses BotConfig.hotLeadThreshold.
+    """
     reply_lower = reply.lower()
     user_lower = user_msg.lower()
     conv = load_conversation(phone)
@@ -511,6 +617,33 @@ def _update_stage_from_reply(phone: str, reply: str, user_msg: str):
     rejection_words = ["no", "nahi", "nope", "not interested", "too expensive", "bahut zyada"]
     if any(word in user_lower for word in rejection_words):
         update_seriousness(phone, -5)
+
+    # Hot-lead trigger — fire owner alert once when score crosses threshold.
+    # Idempotency: a sentinel string is appended to conv['notes'] on first fire so
+    # subsequent crossings don't re-page Saransh. (BotConversation.hotLeadAlertSentAt
+    # would be the cleaner store but isn't on the model yet — see audit Section E.)
+    try:
+        post_update_conv = load_conversation(phone)
+        score = int(post_update_conv.get("seriousness_score", 0) or 0)
+        threshold = await _get_hot_lead_threshold()
+        already_alerted = any(
+            isinstance(n, str) and n.startswith("hot_lead_alert_sent")
+            for n in post_update_conv.get("notes", [])
+        )
+        if score >= threshold and not already_alerted and not post_update_conv.get("handoff_triggered"):
+            from agent.whatsapp import send_owner_alert
+            summary = get_summary(phone)
+            await send_owner_alert(summary)
+            # Mark idempotency sentinel directly on disk — using update_details would
+            # collide with structured fields, so we append to notes via a fresh load+save.
+            marker_conv = load_conversation(phone)
+            marker_conv.setdefault("notes", []).append(
+                f"hot_lead_alert_sent score={score} threshold={threshold}"
+            )
+            save_conversation(phone, marker_conv)
+            log.info("core.hot_lead_alert_fired", phone_tail=phone[-4:], score=score, threshold=threshold)
+    except Exception as e:
+        log.warning("core.hot_lead_alert_failed", error=str(e))
 
 
 def _extract_and_store_details(phone: str):
