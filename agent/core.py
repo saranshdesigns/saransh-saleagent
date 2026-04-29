@@ -82,6 +82,44 @@ DEFAULT_OFF_HOURS_MESSAGE = ""
 DEFAULT_HOT_LEAD_THRESHOLD = 7
 DEFAULT_LANGUAGE_MODE = "ENGLISH_ONLY"
 
+# Chunk 4: signal weights — drives agreement/rejection score deltas.
+# Mirrors the dashboard default at saransh-dashboard/backend/src/routes/bot-config-advanced.js.
+# Values are on a small (~1-3) scale per BotConfig contract; the bot multiplies by 10
+# at apply time to bridge to its 0-100 seriousness scale (same pattern as hotLeadThreshold).
+DEFAULT_SIGNAL_WEIGHTS = {
+    "asked_pricing": 2,
+    "shared_budget": 3,
+    "requested_call": 3,
+    "specific_project": 2,
+    "shared_timeline": 2,
+    "agreement": 2,
+    "rejection": -1,
+    "off_topic": -1,
+}
+
+# Chunk 5: rate limit + daily spend kill-switch defaults — preserve current behaviour
+# when DB columns are NULL.
+DEFAULT_RATE_LIMIT_PER_HOUR = 60
+DEFAULT_DAILY_SPEND_LIMIT_USD = 20.0
+
+# OpenAI April 2026 price table (USD per 1M tokens). Source: OpenAI public pricing
+# page snapshot taken 2026-04-29 — gpt-4o-mini $0.150 in / $0.600 out, gpt-4o
+# $2.50 in / $10.00 out, text-embedding-3-small $0.020. Hardcoded here so the
+# kill-switch keeps working even when the dashboard route is unreachable; LLMUsage
+# table integration is deferred to bot-v2 per the plan.
+_OPENAI_PRICE_PER_1M = {
+    "gpt-4o-mini": {"in": 0.150, "out": 0.600},
+    "gpt-4o": {"in": 2.50, "out": 10.00},
+    "text-embedding-3-small": {"in": 0.020, "out": 0.020},
+}
+
+# In-memory daily spend tracker — IST midnight reset, single-process counter.
+# Bot is single-instance today so process-local is sufficient; a future multi-worker
+# deployment would migrate this to Redis / Postgres (deferred to bot-v2).
+_DAILY_SPEND_USD = 0.0
+_DAILY_SPEND_DATE = None  # initialised lazily on first call (date in IST)
+_DAILY_SPEND_ALERT_SENT = False  # one-shot owner alert per IST day
+
 # Track which (field, source) pairs have logged once per process (info-level, not per request).
 _LOGGED: set = set()
 
@@ -106,7 +144,8 @@ async def _load_bot_config() -> dict:
                 '"callRequestMessage", "handoffMessage", "botName", "businessName", '
                 '"llmReplyModel", "llmVisionModel", "llmReplyTemperature", "toolCallCap", '
                 '"personaTraits", "toneExamples", "offHoursMessage", '
-                '"hotLeadThreshold", "languageMode" '
+                '"hotLeadThreshold", "languageMode", '
+                '"signalWeightsJson", "rateLimitPerHour", "dailySpendLimitUsd" '
                 'FROM "BotConfig" WHERE id = $1',
                 "singleton",
             )
@@ -260,6 +299,144 @@ async def _get_language_mode() -> str:
     if value not in ("ENGLISH_ONLY", "AUTO_MIRROR", "CUSTOMER_LANGUAGE_ONLY"):
         return DEFAULT_LANGUAGE_MODE
     return value
+
+
+# Chunk 4 accessor — signal weights drive scoring deltas.
+async def _get_signal_weights() -> dict:
+    """Return the merged signal-weights dict.
+
+    Falls through to DEFAULT_SIGNAL_WEIGHTS if the column is NULL, malformed,
+    or contains non-numeric values. Partial overrides are merged on top of the
+    defaults so missing keys keep their default (e.g. dashboard sets only
+    "agreement"=3 and the rest stay default).
+    """
+    cfg = await _load_bot_config()
+    raw = cfg.get("signalWeightsJson") if cfg else None
+    # asyncpg returns Json columns as already-parsed dicts/lists; tolerate str too
+    # in case some other client wrote a raw JSON string.
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            raw = None
+    if not isinstance(raw, dict):
+        key = ("signalWeightsJson", "default_fallback")
+        if key not in _LOGGED:
+            _LOGGED.add(key)
+            log.info("bot_config.loaded", source="default_fallback", field="signal_weights")
+        return dict(DEFAULT_SIGNAL_WEIGHTS)
+    merged = dict(DEFAULT_SIGNAL_WEIGHTS)
+    for k, v in raw.items():
+        if isinstance(k, str) and isinstance(v, (int, float)):
+            merged[k] = v
+    key = ("signalWeightsJson", "db")
+    if key not in _LOGGED:
+        _LOGGED.add(key)
+        log.info("bot_config.loaded", source="db", field="signal_weights")
+    return merged
+
+
+# Chunk 5 accessors — rate limit + daily spend kill-switch.
+async def _get_rate_limit_per_hour() -> int:
+    """Per-phone inbound message cap per rolling hour."""
+    cfg = await _load_bot_config()
+    raw = _resolve_typed_field(cfg, "rateLimitPerHour", DEFAULT_RATE_LIMIT_PER_HOUR, "rate_limit_per_hour")
+    try:
+        v = int(raw)
+        return v if v > 0 else DEFAULT_RATE_LIMIT_PER_HOUR
+    except (TypeError, ValueError):
+        return DEFAULT_RATE_LIMIT_PER_HOUR
+
+
+async def _get_daily_spend_limit_usd() -> float:
+    """Hard daily spend cap (USD). Crossing it engages the kill-switch."""
+    cfg = await _load_bot_config()
+    raw = _resolve_typed_field(cfg, "dailySpendLimitUsd", DEFAULT_DAILY_SPEND_LIMIT_USD, "daily_spend_limit_usd")
+    try:
+        v = float(raw)
+        return v if v > 0 else DEFAULT_DAILY_SPEND_LIMIT_USD
+    except (TypeError, ValueError):
+        return DEFAULT_DAILY_SPEND_LIMIT_USD
+
+
+def _today_ist_date():
+    """IST calendar date — used as the bucket key for daily spend reset."""
+    return datetime.now(IST).date()
+
+
+def _maybe_reset_daily_spend():
+    """Reset the in-memory spend counter when the IST date rolls over."""
+    global _DAILY_SPEND_USD, _DAILY_SPEND_DATE, _DAILY_SPEND_ALERT_SENT
+    today = _today_ist_date()
+    if _DAILY_SPEND_DATE != today:
+        _DAILY_SPEND_USD = 0.0
+        _DAILY_SPEND_DATE = today
+        _DAILY_SPEND_ALERT_SENT = False
+
+
+def _record_openai_cost(model: str, response) -> None:
+    """Add the cost of one OpenAI completion to today's spend counter.
+
+    Uses response.usage.prompt_tokens / completion_tokens against the hardcoded
+    April 2026 price table. Unknown models are scored as gpt-4o-mini (cheapest)
+    so a typo in BotConfig can never silently inflate the kill-switch trigger.
+    Defensive: any exception is swallowed — accounting must never break replies.
+    """
+    global _DAILY_SPEND_USD
+    try:
+        _maybe_reset_daily_spend()
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return
+        prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
+        completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+        # Strip provider prefix (e.g. "openai/gpt-4o-mini") and use the leaf name.
+        leaf = (model or "").split("/")[-1].strip()
+        price = _OPENAI_PRICE_PER_1M.get(leaf) or _OPENAI_PRICE_PER_1M["gpt-4o-mini"]
+        cost = (prompt_tokens / 1_000_000) * price["in"] + (completion_tokens / 1_000_000) * price["out"]
+        _DAILY_SPEND_USD += cost
+        log.debug(
+            "daily_spend.record",
+            model=leaf,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cost_usd=round(cost, 6),
+            today_total_usd=round(_DAILY_SPEND_USD, 4),
+        )
+    except Exception as e:
+        log.warning("daily_spend.record_failed", error=str(e))
+
+
+async def _is_daily_spend_exhausted() -> bool:
+    """Check the kill-switch. Returns True if today's spend has hit the configured limit.
+
+    Side effect: fires a one-shot owner alert per IST day on first crossing.
+    Logs once per crossing as 'daily_spend.kill_switch_engaged amount=X.XX limit=Y.YY'.
+    """
+    global _DAILY_SPEND_ALERT_SENT
+    _maybe_reset_daily_spend()
+    try:
+        limit = await _get_daily_spend_limit_usd()
+    except Exception:
+        limit = DEFAULT_DAILY_SPEND_LIMIT_USD
+    if _DAILY_SPEND_USD < limit:
+        return False
+    log.warning(
+        "daily_spend.kill_switch_engaged",
+        amount=round(_DAILY_SPEND_USD, 4),
+        limit=round(limit, 4),
+    )
+    if not _DAILY_SPEND_ALERT_SENT:
+        _DAILY_SPEND_ALERT_SENT = True
+        try:
+            from agent.whatsapp import send_owner_alert
+            await send_owner_alert({
+                "phone": "system",
+                "summary": f"Daily LLM spend kill-switch engaged: ${_DAILY_SPEND_USD:.2f} >= ${limit:.2f}. Bot is returning fallback replies until midnight IST.",
+            })
+        except Exception as e:
+            log.warning("daily_spend.alert_send_failed", error=str(e))
+    return True
 
 
 def _get_reply_model_sync() -> str:
@@ -421,8 +598,9 @@ Is First Message: {len(conv['messages']) <= 1}{projects_context}
 
 def detect_intent(message: str) -> dict:
     """Quick intent detection without full conversation context. Token-efficient."""
+    intent_model = _get_reply_model_sync()
     response = client.chat.completions.create(
-        model=_get_reply_model_sync(),
+        model=intent_model,
         messages=[
             {
                 "role": "system",
@@ -439,6 +617,8 @@ Return JSON only with:
         max_tokens=100,
         response_format={"type": "json_object"}
     )
+    # Chunk 5: account this small probe call against the daily-spend budget too.
+    _record_openai_cost(intent_model, response)
     try:
         return json.loads(response.choices[0].message.content)
     except Exception:
@@ -478,7 +658,13 @@ async def process_message(phone: str, message: str, image_data: str = None, wami
     if conv["service"] == ServiceType.UNKNOWN and intent["service"] != "unknown":
         update_service(phone, intent["service"])
 
-    # Seriousness: quick replies = +5
+    # Seriousness: any user reply earns a small engagement bonus (+3).
+    # Chunk 4 NOTE: this bonus is intentionally NOT routed through signalWeightsJson
+    # yet — there is no operator-facing toggle for "engagement bonus per reply" in
+    # the dashboard contract today, and changing the magnitude would shift the
+    # baseline scoring curve for every conversation. Preserved as-is to avoid
+    # silently changing scoring semantics; revisit when an explicit
+    # "engagement_bonus" key is added to BotConfig.signalWeightsJson.
     update_seriousness(phone, 3)
 
     # Build full message context
@@ -514,6 +700,16 @@ async def process_message(phone: str, message: str, image_data: str = None, wami
     reply_temperature = await _get_reply_temperature()
     tool_call_cap = await _get_tool_call_cap()
 
+    # Chunk 5: daily-spend kill-switch. If today's running total has hit
+    # BotConfig.dailySpendLimitUsd we return a graceful fallback and skip the
+    # OpenAI call entirely. The kill-switch is checked once per inbound (here)
+    # and once per follow-up tool round below — both gate on the same in-memory
+    # counter, so a single spike during a tool loop trips immediately.
+    if await _is_daily_spend_exhausted():
+        fallback = "I'm temporarily unavailable. Saransh will reply directly shortly."
+        add_message(phone, "assistant", fallback)
+        return fallback
+
     # Phase 3: call with tools (strict=true), parallel_tool_calls=false
     response = client.chat.completions.create(
         model=model,
@@ -523,6 +719,7 @@ async def process_message(phone: str, message: str, image_data: str = None, wami
         max_tokens=600,
         temperature=reply_temperature,
     )
+    _record_openai_cost(model, response)
 
     msg = response.choices[0].message
 
@@ -547,6 +744,11 @@ async def process_message(phone: str, message: str, image_data: str = None, wami
                     "tool_call_id": tool_call.id,
                     "content": result,
                 })
+            # Chunk 5: re-check kill-switch before each follow-up call so a
+            # tool-heavy conversation can't push spend significantly past the cap.
+            if await _is_daily_spend_exhausted():
+                msg = type("EmptyMsg", (), {"content": "I'm temporarily unavailable. Saransh will reply directly shortly.", "tool_calls": None})()
+                break
             # Get next response
             response = client.chat.completions.create(
                 model=model,
@@ -556,6 +758,7 @@ async def process_message(phone: str, message: str, image_data: str = None, wami
                 max_tokens=600,
                 temperature=reply_temperature,
             )
+            _record_openai_cost(model, response)
             msg = response.choices[0].message
             if not msg.tool_calls:
                 break
@@ -609,14 +812,30 @@ async def _update_stage_from_reply(phone: str, reply: str, user_msg: str):
         update_stage(phone, ConversationStage.PRESENTING_PRICING)
         return
 
-    # Seriousness updates from user message
+    # Seriousness updates from user message.
+    # Chunk 4: deltas now sourced from BotConfig.signalWeightsJson. DB values are
+    # on the BotConfig 1-3 scale; we multiply by 10 to bridge to the bot's 0-100
+    # seriousness scale (same pattern as hotLeadThreshold). NULL/missing column
+    # falls through to DEFAULT_SIGNAL_WEIGHTS which mirrors the dashboard default
+    # (agreement=2 -> +20, rejection=-1 -> -10). The previous hardcoded values
+    # were +10/-5; this is an intentional, operator-controlled change made visible
+    # via the dashboard slider.
+    signal_weights = await _get_signal_weights()
     agreement_words = ["okay", "ok", "yes", "sure", "agreed", "fine", "deal", "proceed", "haan", "theek", "chalega"]
     if any(word in user_lower for word in agreement_words):
-        update_seriousness(phone, 10)
+        try:
+            agreement_delta = int(round(float(signal_weights.get("agreement", DEFAULT_SIGNAL_WEIGHTS["agreement"])) * 10))
+        except (TypeError, ValueError):
+            agreement_delta = DEFAULT_SIGNAL_WEIGHTS["agreement"] * 10
+        update_seriousness(phone, agreement_delta)
 
     rejection_words = ["no", "nahi", "nope", "not interested", "too expensive", "bahut zyada"]
     if any(word in user_lower for word in rejection_words):
-        update_seriousness(phone, -5)
+        try:
+            rejection_delta = int(round(float(signal_weights.get("rejection", DEFAULT_SIGNAL_WEIGHTS["rejection"])) * 10))
+        except (TypeError, ValueError):
+            rejection_delta = DEFAULT_SIGNAL_WEIGHTS["rejection"] * 10
+        update_seriousness(phone, rejection_delta)
 
     # Hot-lead trigger — fire owner alert once when score crosses threshold.
     # Idempotency: a sentinel string is appended to conv['notes'] on first fire so
@@ -665,8 +884,9 @@ def _extract_and_store_details(phone: str):
         return
 
     try:
+        extract_model = _get_reply_model_sync()
         response = client.chat.completions.create(
-            model=_get_reply_model_sync(),
+            model=extract_model,
             messages=[
                 {
                     "role": "system",
@@ -693,6 +913,8 @@ Only set a field if the client explicitly mentioned it. Do not guess."""
             max_tokens=200,
             response_format={"type": "json_object"}
         )
+        # Chunk 5: account this background extraction call against the daily budget.
+        _record_openai_cost(extract_model, response)
 
         details = json.loads(response.choices[0].message.content)
 

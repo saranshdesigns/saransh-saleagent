@@ -2,9 +2,10 @@
 Redis-backed per-phone / per-IP rate limiting with graceful degradation.
 
 Buckets:
-  - inbound:<phone>   → 20 messages / 60 s
-  - outbound:<phone>  → 15 replies  / 60 s
-  - ip:<ip>           → 100 requests / 60 s
+  - inbound:<phone>        → 20 messages / 60 s    (DDoS burst cap, hardcoded)
+  - inbound_hour:<phone>   → N messages / 3600 s   (operator-tunable, BotConfig.rateLimitPerHour)
+  - outbound:<phone>       → 15 replies  / 60 s
+  - ip:<ip>                → 100 requests / 60 s
 
 If Redis is unavailable the limiter FAILS OPEN (returns True = allow).
 """
@@ -25,9 +26,14 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 _redis: aioredis.Redis | None = None
 
-# Default bucket settings
+# Default bucket settings.
+# Chunk 5: the 60s burst cap (INBOUND_MAX/INBOUND_WINDOW) is intentionally KEPT
+# as a hardcoded floor — it exists to absorb DDoS / message-storm attacks and is
+# a separate concern from the operator-tunable hourly budget. The hourly cap
+# below pulls from BotConfig.rateLimitPerHour at the call site.
 INBOUND_MAX = 20
 INBOUND_WINDOW = 60
+INBOUND_HOUR_WINDOW = 3600
 OUTBOUND_MAX = 15
 OUTBOUND_WINDOW = 60
 IP_MAX = 100
@@ -149,12 +155,24 @@ async def check_rate_limit(
 # ---------------------------------------------------------------------------
 
 async def is_inbound_allowed(phone: str) -> bool:
-    """Check per-phone inbound rate limit (20 msgs / 60 s)."""
+    """Check per-phone inbound rate limit (20 msgs / 60 s) — DDoS burst floor."""
     return await check_rate_limit(
         key=phone,
         bucket="inbound",
         max_count=INBOUND_MAX,
         window_seconds=INBOUND_WINDOW,
+    )
+
+
+async def is_inbound_hour_allowed(phone: str, max_count: int) -> bool:
+    """Check per-phone hourly inbound cap. ``max_count`` is sourced live from
+    BotConfig.rateLimitPerHour by the caller — passing it in keeps this module
+    free of bot-runtime imports."""
+    return await check_rate_limit(
+        key=phone,
+        bucket="inbound_hour",
+        max_count=max_count,
+        window_seconds=INBOUND_HOUR_WINDOW,
     )
 
 

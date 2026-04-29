@@ -38,7 +38,7 @@ from modules.logging_config import (
 from modules.webhook_models import WhatsAppWebhookPayload
 from modules.db import init_pool, close_pool, is_lead_opted_out, set_lead_opted_out, audit_log
 from agent.router import route_message, record_route, RouteResult
-from agent.security.rate_limit import init_redis, close_redis, is_inbound_allowed, is_ip_allowed
+from agent.security.rate_limit import init_redis, close_redis, is_inbound_allowed, is_inbound_hour_allowed, is_ip_allowed
 from agent.security.input_filter import sanitize_input, is_message_allowed
 
 from agent.core import process_message, process_owner_command
@@ -331,9 +331,27 @@ async def receive_message(request: Request):
             except Exception:
                 pass
 
-            # Phase 5: Per-phone inbound rate limiting
+            # Phase 5: Per-phone inbound rate limiting (60s burst — DDoS floor, hardcoded).
             if not await is_inbound_allowed(phone):
-                log.warning("webhook.phone_rate_limited", phone_hash=hash_phone(phone))
+                log.warning("webhook.phone_rate_limited", phone_hash=hash_phone(phone), bucket="burst")
+                continue  # silently drop — don't alert user
+
+            # Chunk 5: per-phone hourly cap, sourced live from BotConfig.rateLimitPerHour.
+            # Burst limits above are preserved as a separate DDoS floor; this hourly bucket
+            # is the operator-tunable budget. NULL column → DEFAULT_RATE_LIMIT_PER_HOUR (60).
+            try:
+                from agent.core import _get_rate_limit_per_hour
+                hourly_cap = await _get_rate_limit_per_hour()
+            except Exception as _hourly_exc:
+                log.warning("webhook.hourly_cap_lookup_failed", error=str(_hourly_exc))
+                hourly_cap = 60
+            if not await is_inbound_hour_allowed(phone, hourly_cap):
+                log.warning(
+                    "webhook.phone_rate_limited",
+                    phone_hash=hash_phone(phone),
+                    bucket="hour",
+                    hourly_cap=hourly_cap,
+                )
                 continue  # silently drop — don't alert user
 
             # Legacy downstream code expects raw-dict messages. Pass model_dump.
